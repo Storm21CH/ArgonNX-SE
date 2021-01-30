@@ -105,13 +105,13 @@ $ python argon.py --help
 
 These images were captured with the **screenshot** feature.
 
-<img src="Screenshot/1.png" alt="example" width="700">
+<img src="Screenshots/1.png" alt="example" width="700">
 
-<img src="Screenshot/2.png" alt="example" width="700">
+<img src="Screenshots/2.png" alt="example" width="700">
 
-<img src="Screenshot/3.png" alt="example" width="700">
+<img src="Screenshots/3.png" alt="example" width="700">
 
-<img src="Screenshot/4.png" alt="example" width="700">
+<img src="Screenshots/4.png" alt="example" width="700">
 
 As you can see in the pictures, payloads are displayed in groups of 8 and each group is displayed in a different *payloads* tab. Maximum 16 Payloads, Two Tabs...
 
