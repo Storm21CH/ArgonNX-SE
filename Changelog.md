@@ -43,3 +43,17 @@
     2. Loads the GUI
 - Bootlogo/splash and wait until GUI is loaded.
 - Improve system stability to enhance user experience.
+
+## ArgonNX-SE v1.0 by Storm
+
+- Build with newest hekate HW Libs
+- Mariko Support
+- Joycon Mouse
+- UMS SD Card
+- Theme delete SX
+- Theme delete ATM
+- Update SX
+- Set RTC Time and Date
+- Status Bar: Battery, Time and Date, Temperatur Info, Power Infos
+- Hardware info Page
+- Reload Menü
