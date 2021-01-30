@@ -1,8 +1,8 @@
+ArgonNX-SE
 
 <img src="img/splash.jpg" alt="banner">
 
 ![License badge](https://img.shields.io/badge/license-GPLv2-blue.svg)
-[![Homebrew Store](https://img.shields.io/badge/Homebrew%20Switch-store-%23ff4554.svg)](https://www.switchbru.com/appstore/#/app/argon-nx)
 
 ## What Argon is?
 
@@ -18,14 +18,11 @@ The purpose of Argon NX is to stay immutable, so you can always inject it, witho
 
 ## How can it be immutable?
 
-When Argon NX is injected, it automatically launches the `payload.bin` loacted at `argon` directory on your SD Card root. 
-
-If `payload.bin` is not present or VOLUME DOWN button is pressed on payload injection, Argon NX will list all payloads located at `argon/payloads`, and you will be able to select one of them to launch it.
+When Argon NX is injected, Argon NX will list all payloads located at `argon/payloads`, and you will be able to select one of them to launch it.
 
 ## Features
 
-- **Autolaunch/autochainload** the payload named `payload.bin` inside `argon` directory in your sd card root.
-- If `argon/payload.bin` is not found or `VOLUME_DOWN_BUTTON` is held during ArgonNX injection, ArgonNX will list all the payloads located at `argon/payloads`, so you can select one of them to launch it.
+ArgonNX will list all the payloads located at `argon/payloads`, so you can select one of them to launch it.
 - **Customize payloads' logos**. **Logos must be smaller or equal than 280x280** (See About BMP format section). Example:
 
 ```
@@ -41,10 +38,23 @@ argon
 ```
 
 - **Custom backgrounds** can be added by placing `background.bmp` file inside `argon` directory. **The background must be smaller or equal than 1280x720**.
-- Take **screenshots** to share your ArgonNX gui. To capture ArgonNX screen tap anywhere with two or more fingers.
+- Take **screenshots** to share your ArgonNX gui. To capture ArgonNX screen tap anywhere with three fingers or use Capture Button on Joycon.
 - Touch support. Thanks to @pixel-stuck
-- Simple tools. (Don't expect tools like the onew built in hekate, argon tools are much more lightweighted and simple, such as reboot options)
-- Command Line Interface (CLI) to facilitate the procedure to create bmp files for custom logos and backgrounds.
+- Simple tools.
+
+## NEW Features in ArgonNX-SE v1.0 by Storm
+
+- Build with newest hekate HW Libs
+- Mariko Support
+- Joycon Mouse
+- UMS SD Card
+- Theme delete SX
+- Theme delete ATM
+- Update SX
+- Set RTC Time and Date
+- Status Bar: Battery, Time and Date, Temperatur Info, Power Infos
+- Hardware info Page
+- Reload Menü
 
 ## About BMP format
 
@@ -95,17 +105,17 @@ $ python argon.py --help
 
 These images were captured with the **screenshot** feature.
 
-<img src="img/example1.png" alt="example" width="700">
+<img src="Screenshot/1.png" alt="example" width="700">
 
-<img src="img/example2.png" alt="example" width="700">
+<img src="Screenshot/2.png" alt="example" width="700">
 
-<img src="img/example3.png" alt="example" width="700">
+<img src="Screenshot/3.png" alt="example" width="700">
 
-<img src="img/example4.png" alt="example" width="700">
+<img src="Screenshot/4.png" alt="example" width="700">
 
-As you can see in the pictures, payloads are displayed in groups of 4 and each group is displayed in a different *payloads* tab.
+As you can see in the pictures, payloads are displayed in groups of 8 and each group is displayed in a different *payloads* tab. Maximum 16 Payloads, Two Tabs...
 
-You can find the logos used in the pictures inside [this directory](img/example-custom/logos) and backgrounds [here](img/example-custom/backgrounds).
+You can find the logos used in the pictures inside [this directory](img/example-custom/logos) and backgrounds [here](img/example-custom/backgrounds). And in the Release files.
 
 ## ArgonNX sd card tree
 
@@ -127,10 +137,15 @@ argon
 |       SXOS.bmp
 |
 ├─── sys
+|       argon-nx-gui.bin # Menu
 |       minerva.bso # IMPORTANT if you want a good UX experience
-|       resources.argon # IMPORTANT. Binary file containing all render resources except the background and logos
+|       res.emunsw # IMPORTANT. Binary file containing all render resources except the background and logos
+|       hw.ini
+|       lp0.bso
+|       logos-gui
 |
 └─── background.bmp
+     splash.bmp
 ```
 
 ## Improve performance
@@ -144,12 +159,6 @@ To learn more about Minerva Training Cell check its [official repo](https://gith
 
 This payload will chainload any CFW or payload. 
 
-Some users reported issuses when chainloading SX OS. <small>But with Atmosphere out there... who wants SXOS?</small> 🙄
-
-## Roadmap
-
-1. Config file to manage tabs titles and argon sd card directory tree.
-2. More tools inside tools tab.
 
 ## Credits
 
@@ -160,3 +169,5 @@ Some users reported issuses when chainloading SX OS. <small>But with Atmosphere 
 * __langerhans__ and  __stuck-pixel__ for their implementation of touch support.
 * __LittlevGL__ for being such a good embedded graphics library.
 * __D3fau4__ for touch support testing.
+* __Guillem96__ for argonNX Orginal.
+* __Muxi1__ for Mariko testing.
