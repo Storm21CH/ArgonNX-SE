@@ -1195,7 +1195,7 @@ static lv_res_t ctrl_info(lv_obj_t* btn)
 	lv_obj_set_top(mbox, true);
 	lv_obj_set_auto_realign(mbox, true);
 	lv_obj_align(mbox, NULL, LV_ALIGN_IN_TOP_RIGHT, 5, 5);
-	lv_mbox_set_text(mbox, "ArgonNX-SE Version 1.0 by Storm 2021\ncreated with Visual Studio and LittlevGL\npartially based on ArgonNX und Hekate\nIcon templates from mrdude\nThanks to the programmers!");
+	lv_mbox_set_text(mbox, "ArgonNX-SE Version 1.1 by Storm 2021\ncreated with Visual Studio and LittlevGL\npartially based on ArgonNX und Hekate\nIcon templates from mrdude\nThanks to the programmers!");
 	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &bg);
 	lv_mbox_start_auto_close(mbox, 12000);
 
@@ -1910,7 +1910,7 @@ static void create_title(lv_theme_t* th)
 	//Title Erstellen
 	lv_obj_t* title = lv_label_create(lv_scr_act(), NULL);
 	lv_obj_align(title, lv_scr_act(), LV_ALIGN_IN_TOP_LEFT, 65, 620);//15
-	lv_label_set_text(title, "ArgonNX-SE v1.0");
+	lv_label_set_text(title, "ArgonNX-SE v1.1");
 	lv_obj_set_auto_realign(title, true);
 
 	static lv_style_t label_style;
