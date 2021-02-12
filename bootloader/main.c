@@ -777,8 +777,38 @@ void nyx_load_run()
 	(*nyx_ptr)();
 }
 
+//Autolaunch Payload wenn autolaunch.bin in argon Ordner sonst GUI laden oder mit halten Vol- autolaunch abbrechen
 static void _auto_launch_firmware()
 {
+	if (f_stat("argon/autolaunch.bin", NULL))
+	{
+		goto out;
+	}
+
+	else
+	{
+		char* payload_path = NULL;
+		u32 btn = 0;
+
+		// Wait before booting. If VOL- is pressed go into bootloader menu.
+		if (!h_cfg.sept_run && !(b_cfg.boot_cfg & BOOT_CFG_FROM_LAUNCH))
+		{
+			btn = btn_wait_timeout_single(h_cfg.bootwait * 1000, BTN_VOL_DOWN | BTN_SINGLE);
+
+			if (btn & BTN_VOL_DOWN)
+				goto out;
+		}
+
+		payload_path = "argon/autolaunch.bin";
+
+		if (payload_path)
+		{
+			launch_payload(payload_path, false);
+			goto out;
+		}
+	}
+
+out:
 	nyx_load_run();
 }
 
