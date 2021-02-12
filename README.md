@@ -19,6 +19,9 @@ The purpose of Argon NX is to stay immutable, so you can always inject it, witho
 ## How can it be immutable?
 
 When Argon NX is injected, Argon NX will list all payloads located at `argon/payloads`, and you will be able to select one of them to launch it.
+Autolaunch Payload:
+If the file "autolaunch.bin" (your payload) is in the "argon" folder, this payload should start.
+(Volume -) hold during the payload run, starts ArgonNX-SE...
 
 ## Features
 
@@ -55,6 +58,12 @@ argon
 - Status Bar: Battery, Time and Date, Temperatur Info, Power Infos
 - Hardware info Page
 - Reload Menü
+
+## NEW Features in ArgonNX-SE v1.1 by Storm
+
+- Autolaunch Payload:
+If the file "autolaunch.bin" (your payload) is in the "argon" folder, this payload should start.
+(Volume -) hold during the payload run, starts ArgonNX-SE...
 
 ## About BMP format
 
