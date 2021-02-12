@@ -57,3 +57,10 @@
 - Status Bar: Battery, Time and Date, Temperatur Info, Power Infos
 - Hardware info Page
 - Reload Menü
+
+## ArgonNX-SE v1.1 by Storm
+
+- Autolaunch Payload:
+If the file "autolaunch.bin" (your payload) is in the "argon" folder, this payload should start.
+(Volume -) hold during the payload run, starts ArgonNX-SE...
+
