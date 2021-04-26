@@ -118,7 +118,7 @@ These images were captured with the **screenshot** feature.
 
 <img src="Screenshots/1.png" alt="example" width="700">
 
-<img src="Screenshots/2.png" alt="example" width="700">
+![](Screenshots/2.jpg)
 
 <img src="Screenshots/3.png" alt="example" width="700">
 
