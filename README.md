@@ -80,7 +80,7 @@ Key assignment usage Filemanager:
 
 ## Neue Funktionen in ArgonNX-SE v1.2 by Storm
 
-- Update SX entfehrnt
+- Update SX entfernt
 - Filemanager für Argon und Emunandswitcher hinzugefügt
 - Reboot Menu mit Power Button hinzugefügt
 
