@@ -148,7 +148,7 @@ These images were captured with the **screenshot** feature.
 
 ![](Screenshots/5.jpg)
 
-![](Screenshots/6.jpg)
+![](Screenshots/7.jpg)
 
 As you can see in the pictures, payloads are displayed in groups of 8 and each group is displayed in a different *payloads* tab. Maximum 16 Payloads, Two Tabs...
 
