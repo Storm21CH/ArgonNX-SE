@@ -67,6 +67,28 @@ argon
 If the file "autolaunch.bin" (your payload) is in the "argon" folder, this payload should start.
 (Volume -) hold during the payload run, starts ArgonNX-SE...
 
+## NEW Features in ArgonNX-SE v1.2 by Storm
+
+- Update SX removed
+- Added Filemanager for Argon and Emunandswitcher
+- Added Reboot Menu with Power Button
+
+Key assignment usage Filemanager:
+- Touch screen as usual
+- Joycon Mouse, A = Enter folder / Choose Buttons, B = Back Folder, X = Close Window
+- Joypad up / down Filelist navigation, A = Enter folder, B = Back Folder, X = Close Window
+
+## Neue Funktionen in ArgonNX-SE v1.2 by Storm
+
+- Update SX entfehrnt
+- Filemanager für Argon und Emunandswitcher hinzugefügt
+- Reboot Menu mit Power Button hinzugefügt
+
+Tastenbelegung Bedienung Filemanager:
+- Touch screen wie gewohnt
+- Joycon Mouse, A = Eingang Ordner / Button wählen, B = Ordner zurück, X = Fenster schliessen
+- Joypad up / down Dateiliste navigation, A = Eingang Ordner, B = Ordner zurück, X = Fenster schliessen
+
 ## About BMP format
 
 The only format supported is **BMP 32 bit ARGB color**.
@@ -123,6 +145,10 @@ These images were captured with the **screenshot** feature.
 <img src="Screenshots/3.png" alt="example" width="700">
 
 <img src="Screenshots/4.png" alt="example" width="700">
+
+![](Screenshots/5.jpg)
+
+![](Screenshots/6.jpg)
 
 As you can see in the pictures, payloads are displayed in groups of 8 and each group is displayed in a different *payloads* tab. Maximum 16 Payloads, Two Tabs...
 
