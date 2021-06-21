@@ -3,6 +3,7 @@ ArgonNX-SE
 <img src="img/splash.jpg" alt="banner">
 
 ![License badge](https://img.shields.io/badge/license-GPLv2-blue.svg)
+![Downloads](https://img.shields.io/github/downloads/Storm21CH/argon-nx/total)
 
 ## What Argon is?
 
