@@ -90,6 +90,12 @@ Tastenbelegung Bedienung Filemanager:
 - Joycon Mouse, A = Eingang Ordner / Button wählen, B = Ordner zurück, X = Fenster schliessen
 - Joypad up / down Dateiliste navigation, A = Eingang Ordner, B = Ordner zurück, X = Fenster schliessen
 
+## NEW Features in ArgonNX-SE v1.3 by Storm
+
+- Build with newest hekate HW Libs 5.5.7
+- Some Buttons Theme fix
+- Fixed a Error after autoclosing a window with X Button (Close Filemanager and other Windows)
+
 ## About BMP format
 
 The only format supported is **BMP 32 bit ARGB color**.
