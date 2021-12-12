@@ -902,7 +902,7 @@ static void tabview_realign(lv_obj_t * tabview)
     }
 
     if(!ext->btns_hide) {
-    	lv_obj_align(ext->indic, ext->btns, LV_ALIGN_IN_TOP_LEFT, 0, 0);
+    	lv_obj_align(ext->indic, ext->btns, LV_ALIGN_IN_TOP_LEFT, 0, 0);//org     	lv_obj_align(ext->indic, ext->btns, LV_ALIGN_IN_BOTTOM_LEFT, 0, 0);//Balken aktiver Tab
     }
 
     lv_tabview_set_tab_act(tabview, ext->tab_cur, false);

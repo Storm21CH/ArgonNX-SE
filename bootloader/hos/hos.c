@@ -2,7 +2,7 @@
  * Copyright (c) 2018 naehrwert
  * Copyright (c) 2018 st4rk
  * Copyright (c) 2018 Ced2911
- * Copyright (c) 2018-2020 CTCaer
+ * Copyright (c) 2018-2021 CTCaer
  * Copyright (c) 2018 balika011
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -75,7 +75,29 @@ typedef struct _secmon_mailbox_t
 	u32 out;
 } secmon_mailbox_t;
 
-static const u8 keyblob_keyseeds[][0x10] = {
+typedef struct _tsec_keys_t
+{
+	u8 tsec[SE_KEY_128_SIZE];
+	u8 tsec_root[SE_KEY_128_SIZE];
+	u8 tmp[SE_KEY_128_SIZE];
+} tsec_keys_t;
+
+typedef struct _kb_keys_t
+{
+	u8 master_keyseed[SE_KEY_128_SIZE];
+	u8 random_data[0x70];
+	u8 package1_key[SE_KEY_128_SIZE];
+} kb_keys_t;
+
+typedef struct _kb_t
+{
+	u8 cmac[SE_KEY_128_SIZE];
+	u8 ctr[SE_AES_IV_SIZE];
+	kb_keys_t keys;
+	u8 padding[0x150];
+} kb_t;
+
+static const u8 keyblob_keyseeds[][SE_KEY_128_SIZE] = {
 	{ 0xDF, 0x20, 0x6F, 0x59, 0x44, 0x54, 0xEF, 0xDC, 0x70, 0x74, 0x48, 0x3B, 0x0D, 0xED, 0x9F, 0xD3 }, // 1.0.0.
 	{ 0x0C, 0x25, 0x61, 0x5D, 0x68, 0x4C, 0xEB, 0x42, 0x1C, 0x23, 0x79, 0xEA, 0x82, 0x25, 0x12, 0xAC }, // 3.0.0.
 	{ 0x33, 0x76, 0x85, 0xEE, 0x88, 0x4A, 0xAE, 0x0A, 0xC2, 0x8A, 0xFD, 0x7D, 0x63, 0xC0, 0x43, 0x3B }, // 3.0.1.
@@ -84,19 +106,19 @@ static const u8 keyblob_keyseeds[][0x10] = {
 	{ 0xD8, 0xCC, 0xE1, 0x26, 0x6A, 0x35, 0x3F, 0xCC, 0x20, 0xF3, 0x2D, 0x3B, 0x51, 0x7D, 0xE9, 0xC0 }  // 6.0.0.
 };
 
-static const u8 cmac_keyseed[0x10] =
+static const u8 cmac_keyseed[SE_KEY_128_SIZE] =
 	{ 0x59, 0xC7, 0xFB, 0x6F, 0xBE, 0x9B, 0xBE, 0x87, 0x65, 0x6B, 0x15, 0xC0, 0x53, 0x73, 0x36, 0xA5 };
 
-static const u8 master_keyseed_retail[0x10] =
+static const u8 master_keyseed_retail[SE_KEY_128_SIZE] =
 	{ 0xD8, 0xA2, 0x41, 0x0A, 0xC6, 0xC5, 0x90, 0x01, 0xC6, 0x1D, 0x6A, 0x26, 0x7C, 0x51, 0x3F, 0x3C };
 
-static const u8 master_keyseed_4xx_5xx_610[0x10] =
+static const u8 master_keyseed_4xx_5xx_610[SE_KEY_128_SIZE] =
 	{ 0x2D, 0xC1, 0xF4, 0x8D, 0xF3, 0x5B, 0x69, 0x33, 0x42, 0x10, 0xAC, 0x65, 0xDA, 0x90, 0x46, 0x66 };
 
-static const u8 master_keyseed_620[0x10] =
+static const u8 master_keyseed_620[SE_KEY_128_SIZE] =
 	{ 0x37, 0x4B, 0x77, 0x29, 0x59, 0xB4, 0x04, 0x30, 0x81, 0xF6, 0xE5, 0x8C, 0x6D, 0x36, 0x17, 0x9A };
 
-static const u8 master_kekseed_t210b01[][0x10] = {
+static const u8 master_kekseed_t210b01[][SE_KEY_128_SIZE] = {
 	{ 0x77, 0x60, 0x5A, 0xD2, 0xEE, 0x6E, 0xF8, 0x3C, 0x3F, 0x72, 0xE2, 0x59, 0x9D, 0xAC, 0x5E, 0x56 }, // 6.0.0.
 	{ 0x1E, 0x80, 0xB8, 0x17, 0x3E, 0xC0, 0x60, 0xAA, 0x11, 0xBE, 0x1A, 0x4A, 0xA6, 0x6F, 0xE4, 0xAE }, // 6.2.0.
 	{ 0x94, 0x08, 0x67, 0xBD, 0x0A, 0x00, 0x38, 0x84, 0x11, 0xD3, 0x1A, 0xDB, 0xDD, 0x8D, 0xF1, 0x8A }, // 7.0.0.
@@ -105,13 +127,13 @@ static const u8 master_kekseed_t210b01[][0x10] = {
 	{ 0x0E, 0x44, 0x0C, 0xED, 0xB4, 0x36, 0xC0, 0x3F, 0xAA, 0x1D, 0xAE, 0xBF, 0x62, 0xB1, 0x09, 0x82 }, // 9.1.0.
 };
 
-static const u8 console_keyseed[0x10] =
+static const u8 console_keyseed[SE_KEY_128_SIZE] =
 	{ 0x4F, 0x02, 0x5F, 0x0E, 0xB6, 0x6D, 0x11, 0x0E, 0xDC, 0x32, 0x7D, 0x41, 0x86, 0xC2, 0xF4, 0x78 };
 
-static const u8 console_keyseed_4xx_5xx[0x10] =
+static const u8 console_keyseed_4xx_5xx[SE_KEY_128_SIZE] =
 	{ 0x0C, 0x91, 0x09, 0xDB, 0x93, 0x93, 0x07, 0x81, 0x07, 0x3C, 0xC4, 0x16, 0x22, 0x7C, 0x6C, 0x28 };
 
-const u8 package2_keyseed[0x10] =
+const u8 package2_keyseed[SE_KEY_128_SIZE] =
 	{ 0xFB, 0x8B, 0x6A, 0x9C, 0x79, 0x00, 0xC8, 0x49, 0xEF, 0xD2, 0x4D, 0x85, 0x4D, 0x30, 0xA0, 0xC7 };
 
 static void _hos_crit_error(const char *text)
@@ -124,30 +146,33 @@ static void _se_lock(bool lock_se)
 {
 	if (lock_se)
 	{
+		// Disable aes key read.
 		for (u32 i = 0; i < 16; i++)
 			se_key_acc_ctrl(i, SE_KEY_TBL_DIS_KEYREAD_FLAG | SE_KEY_TBL_DIS_OIVREAD_FLAG | SE_KEY_TBL_DIS_UIVREAD_FLAG);
 
+		// Disable RSA key read.
 		for (u32 i = 0; i < 2; i++)
 			se_rsa_acc_ctrl(i, SE_RSA_KEY_TBL_DIS_KEYREAD_FLAG);
-		SE(SE_TZRAM_SECURITY_0) = 0; // Make SE TZRAM secure only.
-		SE(SE_KEY_TABLE_ACCESS_LOCK_OFFSET) = 0; // Make all key access regs secure only.
-		SE(SE_RSA_KEYTABLE_ACCESS_LOCK_OFFSET) = 0; // Make all RSA access regs secure only.
-		SE(SE_SECURITY_0) &= 0xFFFFFFFB; // Make access lock regs secure only.
+
+		SE(SE_TZRAM_SECURITY_REG) = 0;                // Make SE TZRAM secure only.
+		SE(SE_CRYPTO_SECURITY_PERKEY_REG) = 0;        // Make all AES keys access secure only.
+		SE(SE_RSA_SECURITY_PERKEY_REG) = 0;           // Make all RSA keys access secure only.
+		SE(SE_SE_SECURITY_REG) &= ~SE_PERKEY_SETTING; // Make access lock regs secure only.
 	}
 
 	memset((void *)IPATCH_BASE, 0, 14 * sizeof(u32));
 	SB(SB_CSR) = SB_CSR_PIROM_DISABLE;
 
 	// This is useful for documenting the bits in the SE config registers, so we can keep it around.
-	/*gfx_printf("SE(SE_SECURITY_0) = %08X\n", SE(SE_SECURITY_0));
+	/*gfx_printf("SE(SE_SE_SECURITY_REG) = %08X\n", SE(SE_SE_SECURITY_REG));
 	gfx_printf("SE(0x4) = %08X\n", SE(0x4));
-	gfx_printf("SE(SE_KEY_TABLE_ACCESS_LOCK_OFFSET) = %08X\n", SE(SE_KEY_TABLE_ACCESS_LOCK_OFFSET));
-	gfx_printf("SE(SE_RSA_KEYTABLE_ACCESS_LOCK_OFFSET) = %08X\n", SE(SE_RSA_KEYTABLE_ACCESS_LOCK_OFFSET));
+	gfx_printf("SE(SE_CRYPTO_SECURITY_PERKEY_REG) = %08X\n", SE(SE_CRYPTO_SECURITY_PERKEY_REG));
+	gfx_printf("SE(SE_RSA_SECURITY_PERKEY_REG) = %08X\n", SE(SE_RSA_SECURITY_PERKEY_REG));
 	for(u32 i = 0; i < 16; i++)
-		gfx_printf("%02X ", SE(SE_KEY_TABLE_ACCESS_REG_OFFSET + i * 4) & 0xFF);
+		gfx_printf("%02X ", SE(SE_CRYPTO_KEYTABLE_ACCESS_REG + i * 4) & 0xFF);
 	gfx_putc('\n');
 	for(u32 i = 0; i < 2; i++)
-		gfx_printf("%02X ", SE(SE_RSA_KEYTABLE_ACCESS_REG_OFFSET + i * 4) & 0xFF);
+		gfx_printf("%02X ", SE(SE_RSA_KEYTABLE_ACCESS_REG + i * 4) & 0xFF);
 	gfx_putc('\n');
 	gfx_hexdump(SE_BASE, (void *)SE_BASE, 0x400);*/
 }
@@ -240,6 +265,8 @@ void hos_eks_save(u32 kb)
 
 		// If matching blob doesn't exist, create it.
 		bool update_eks = key_idx ? (h_cfg.eks->enabled[key_idx] < kb) : !h_cfg.eks->enabled[0];
+		// If old EKS version was found, update it.
+		update_eks |= h_cfg.eks->lot0 != FUSE(FUSE_OPT_LOT_CODE_0);
 		if (update_eks)
 		{
 			// Read EKS blob.
@@ -256,8 +283,8 @@ void hos_eks_save(u32 kb)
 			}
 
 			// Get keys.
-			u8 *keys = (u8 *)calloc(0x1000, 1);
-			se_get_aes_keys(keys + 0x800, keys, 0x10);
+			u8 *keys = (u8 *)calloc(0x2000, 1);
+			se_get_aes_keys(keys + 0x1000, keys, SE_KEY_128_SIZE);
 
 			// Set magic and personalized info.
 			h_cfg.eks->magic = HOS_EKS_MAGIC;
@@ -265,18 +292,18 @@ void hos_eks_save(u32 kb)
 			h_cfg.eks->lot0 = FUSE(FUSE_OPT_LOT_CODE_0);
 
 			// Copy new keys.
-			memcpy(h_cfg.eks->dkg, keys + 10 * 0x10, 0x10);
-			memcpy(h_cfg.eks->dkk, keys + 15 * 0x10, 0x10);
+			memcpy(h_cfg.eks->dkg, keys + 10 * SE_KEY_128_SIZE, SE_KEY_128_SIZE);
+			memcpy(h_cfg.eks->dkk, keys + 15 * SE_KEY_128_SIZE, SE_KEY_128_SIZE);
 
 			if (!h_cfg.aes_slots_new)
 			{
-				memcpy(h_cfg.eks->keys[key_idx].mkk, keys + 12 * 0x10, 0x10);
-				memcpy(h_cfg.eks->keys[key_idx].fdk, keys + 13 * 0x10, 0x10);
+				memcpy(h_cfg.eks->keys[key_idx].mkk, keys + 12 * SE_KEY_128_SIZE, SE_KEY_128_SIZE);
+				memcpy(h_cfg.eks->keys[key_idx].fdk, keys + 13 * SE_KEY_128_SIZE, SE_KEY_128_SIZE);
 			}
 			else // New sept slots.
 			{
-				memcpy(h_cfg.eks->keys[key_idx].mkk, keys + 13 * 0x10, 0x10);
-				memcpy(h_cfg.eks->keys[key_idx].fdk, keys + 12 * 0x10, 0x10);
+				memcpy(h_cfg.eks->keys[key_idx].mkk, keys + 13 * SE_KEY_128_SIZE, SE_KEY_128_SIZE);
+				memcpy(h_cfg.eks->keys[key_idx].fdk, keys + 12 * SE_KEY_128_SIZE, SE_KEY_128_SIZE);
 			}
 
 			// Encrypt EKS blob.
@@ -287,7 +314,6 @@ void hos_eks_save(u32 kb)
 			// Write EKS blob to SD.
 			memcpy(mbr + 0x80, eks, sizeof(hos_eks_mbr_t));
 			hos_eks_rw_try(mbr, true);
-
 
 			free(eks);
 			free(keys);
@@ -354,10 +380,11 @@ int hos_keygen_t210b01(u32 kb)
 	return 1;
 }
 
-int hos_keygen(u8 *keyblob, u32 kb, tsec_ctxt_t *tsec_ctxt, launch_ctxt_t *hos_ctxt)
+int hos_keygen(void *keyblob, u32 kb, tsec_ctxt_t *tsec_ctxt, launch_ctxt_t *hos_ctxt)
 {
-	u8 tmp[0x30];
 	u32 retries = 0;
+	tsec_keys_t tsec_keys;
+	kb_t *kb_data = (kb_t *)keyblob;
 
 	if (kb > KB_FIRMWARE_VERSION_MAX)
 		return 0;
@@ -385,9 +412,9 @@ int hos_keygen(u8 *keyblob, u32 kb, tsec_ctxt_t *tsec_ctxt, launch_ctxt_t *hos_c
 	// Get TSEC key.
 	if (kb <= KB_FIRMWARE_VERSION_620)
 	{
-		while (tsec_query(tmp, kb, tsec_ctxt) < 0)
+		while (tsec_query(&tsec_keys, kb, tsec_ctxt) < 0)
 		{
-			memset(tmp, 0x00, 0x20);
+			memset(&tsec_keys, 0x00, 0x20);
 			retries++;
 
 			// We rely on racing conditions, make sure we cover even the unluckiest cases.
@@ -409,25 +436,25 @@ int hos_keygen(u8 *keyblob, u32 kb, tsec_ctxt_t *tsec_ctxt, launch_ctxt_t *hos_c
 		if (h_cfg.eks && h_cfg.eks->enabled[key_idx] >= kb)
 		{
 			// Set Device keygen key to slot 10.
-			se_aes_key_set(10, h_cfg.eks->dkg, 0x10);
+			se_aes_key_set(10, h_cfg.eks->dkg, SE_KEY_128_SIZE);
 			// Set Device key to slot 15.
-			se_aes_key_set(15, h_cfg.eks->dkk, 0x10);
+			se_aes_key_set(15, h_cfg.eks->dkk, SE_KEY_128_SIZE);
 
 			if (!h_cfg.aes_slots_new)
 			{
 				// Set Master key to slot 12.
-				se_aes_key_set(12, h_cfg.eks->keys[key_idx].mkk, 0x10);
+				se_aes_key_set(12, h_cfg.eks->keys[key_idx].mkk, SE_KEY_128_SIZE);
 				// Set FW Device key key to slot 13.
-				se_aes_key_set(13, h_cfg.eks->keys[key_idx].fdk, 0x10);
+				se_aes_key_set(13, h_cfg.eks->keys[key_idx].fdk, SE_KEY_128_SIZE);
 				// Lock FDK.
 				se_key_acc_ctrl(13, SE_KEY_TBL_DIS_KEYREAD_FLAG | SE_KEY_TBL_DIS_OIVREAD_FLAG | SE_KEY_TBL_DIS_UIVREAD_FLAG);
 			}
 			else // New exosphere.
 			{
 				// Set Master key to slot 13.
-				se_aes_key_set(13, h_cfg.eks->keys[key_idx].mkk, 0x10);
+				se_aes_key_set(13, h_cfg.eks->keys[key_idx].mkk, SE_KEY_128_SIZE);
 				// Set FW Device key key to slot 12.
-				se_aes_key_set(12, h_cfg.eks->keys[key_idx].fdk, 0x10);
+				se_aes_key_set(12, h_cfg.eks->keys[key_idx].fdk, SE_KEY_128_SIZE);
 				// Lock FDK.
 				se_key_acc_ctrl(12, SE_KEY_TBL_DIS_KEYREAD_FLAG | SE_KEY_TBL_DIS_OIVREAD_FLAG | SE_KEY_TBL_DIS_UIVREAD_FLAG);
 			}
@@ -439,14 +466,14 @@ int hos_keygen(u8 *keyblob, u32 kb, tsec_ctxt_t *tsec_ctxt, launch_ctxt_t *hos_c
 	else if (kb == KB_FIRMWARE_VERSION_620)
 	{
 		// Set TSEC key.
-		se_aes_key_set(12, tmp, 0x10);
+		se_aes_key_set(12, tsec_keys.tsec, SE_KEY_128_SIZE);
 		// Set TSEC root key.
-		se_aes_key_set(13, tmp + 0x10, 0x10);
+		se_aes_key_set(13, tsec_keys.tsec_root, SE_KEY_128_SIZE);
 
 		if (!(emu_cfg.enabled && !h_cfg.emummc_force_disable) && hos_ctxt->stock)
 		{
 			// Package2 key.
-			se_aes_key_set(8, tmp + 0x10, 0x10);
+			se_aes_key_set(8, tsec_keys.tsec_root, SE_KEY_128_SIZE);
 			se_aes_unwrap_key(8, 8, master_keyseed_620);
 			se_aes_unwrap_key(8, 8, master_keyseed_retail);
 			se_aes_unwrap_key(8, 8, package2_keyseed);
@@ -454,8 +481,8 @@ int hos_keygen(u8 *keyblob, u32 kb, tsec_ctxt_t *tsec_ctxt, launch_ctxt_t *hos_c
 		else
 		{
 			// Decrypt keyblob and set keyslots
-			se_aes_crypt_block_ecb(12, 0, tmp + 0x20, keyblob_keyseeds[0]);
-			se_aes_unwrap_key(15, 14, tmp + 0x20);
+			se_aes_crypt_block_ecb(12, 0, tsec_keys.tmp, keyblob_keyseeds[0]);
+			se_aes_unwrap_key(15, 14, tsec_keys.tmp);
 			se_aes_unwrap_key(10, 15, console_keyseed_4xx_5xx);
 			se_aes_unwrap_key(15, 15, console_keyseed);
 
@@ -484,33 +511,36 @@ int hos_keygen(u8 *keyblob, u32 kb, tsec_ctxt_t *tsec_ctxt, launch_ctxt_t *hos_c
 		se_key_acc_ctrl(14, SE_KEY_TBL_DIS_KEYREAD_FLAG | SE_KEY_TBL_DIS_OIVREAD_FLAG | SE_KEY_TBL_DIS_UIVREAD_FLAG);
 
 		// Set TSEC key.
-		se_aes_key_set(13, tmp, 0x10);
+		se_aes_key_set(13, tsec_keys.tsec, SE_KEY_128_SIZE);
 
 		// Derive keyblob keys from TSEC+SBK.
-		se_aes_crypt_block_ecb(13, 0, tmp, keyblob_keyseeds[0]);
-		se_aes_unwrap_key(15, 14, tmp);
-		se_aes_crypt_block_ecb(13, 0, tmp, keyblob_keyseeds[kb]);
-		se_aes_unwrap_key(13, 14, tmp);
+		se_aes_crypt_block_ecb(13, 0, tsec_keys.tsec, keyblob_keyseeds[0]);
+		se_aes_unwrap_key(15, 14, tsec_keys.tsec);
+		se_aes_crypt_block_ecb(13, 0, tsec_keys.tsec, keyblob_keyseeds[kb]);
+		se_aes_unwrap_key(13, 14, tsec_keys.tsec);
 
 		// Clear SBK.
 		se_aes_key_clear(14);
 
-		//TODO: verify keyblob CMAC.
-		//se_aes_unwrap_key(11, 13, cmac_keyseed);
-		//se_aes_cmac(tmp, 0x10, 11, keyblob + 0x10, 0xA0);
-		//if (!memcmp(keyblob, tmp, 0x10))
-		//	return 0;
+/*
+		// Verify keyblob CMAC.
+		u8 cmac[SE_KEY_128_SIZE];
+		se_aes_unwrap_key(11, 13, cmac_keyseed);
+		se_aes_cmac(cmac, SE_KEY_128_SIZE, 11, (void *)kb_data->ctr, sizeof(kb_data->ctr) + sizeof(kb_data->keys));
+		if (!memcmp(kb_data->cmac, cmac, SE_KEY_128_SIZE))
+			return 0;
+*/
 
-		se_aes_crypt_block_ecb(13, 0, tmp, cmac_keyseed);
+		se_aes_crypt_block_ecb(13, 0, tsec_keys.tsec, cmac_keyseed);
 		se_aes_unwrap_key(11, 13, cmac_keyseed);
 
 		// Decrypt keyblob and set keyslots.
-		se_aes_crypt_ctr(13, keyblob + 0x20, 0x90, keyblob + 0x20, 0x90, keyblob + 0x10);
-		se_aes_key_set(11, keyblob + 0x20 + 0x80, 0x10); // Package1 key.
-		se_aes_key_set(12, keyblob + 0x20, 0x10);
-		se_aes_key_set(13, keyblob + 0x20, 0x10);
+		se_aes_crypt_ctr(13, &kb_data->keys, sizeof(kb_data->keys), &kb_data->keys, sizeof(kb_data->keys), kb_data->ctr);
+		se_aes_key_set(11, kb_data->keys.package1_key, SE_KEY_128_SIZE);
+		se_aes_key_set(12, kb_data->keys.master_keyseed, SE_KEY_128_SIZE);
+		se_aes_key_set(13, kb_data->keys.master_keyseed, SE_KEY_128_SIZE);
 
-		se_aes_crypt_block_ecb(12, 0, tmp, master_keyseed_retail);
+		se_aes_crypt_block_ecb(12, 0, tsec_keys.tsec, master_keyseed_retail);
 
 		if (!h_cfg.aes_slots_new)
 		{
@@ -566,8 +596,8 @@ static int _read_emmc_pkg1(launch_ctxt_t *ctxt)
 
 try_load:
 	// Read package1.
-	emummc_storage_set_mmc_partition(&emmc_storage, EMMC_BOOT0);
-	emummc_storage_read(&emmc_storage, bootloader_offset / NX_EMMC_BLOCKSIZE, BOOTLOADER_SIZE / NX_EMMC_BLOCKSIZE, ctxt->pkg1);
+	emummc_storage_set_mmc_partition(EMMC_BOOT0);
+	emummc_storage_read(bootloader_offset / NX_EMMC_BLOCKSIZE, BOOTLOADER_SIZE / NX_EMMC_BLOCKSIZE, ctxt->pkg1);
 
 	ctxt->pkg1_id = pkg1_identify(ctxt->pkg1 + pk1_offset);
 	if (!ctxt->pkg1_id)
@@ -579,7 +609,7 @@ try_load:
 		// Try backup bootloader.
 		if (bootloader_offset != BOOTLOADER_BACKUP_OFFSET)
 		{
-			EPRINTF("Trying backup bootloader...");
+			EPRINTF("\nTrying backup bootloader...");
 			bootloader_offset = BOOTLOADER_BACKUP_OFFSET;
 			goto try_load;
 		}
@@ -590,7 +620,7 @@ try_load:
 
 	// Read the correct keyblob.
 	ctxt->keyblob = (u8 *)calloc(NX_EMMC_BLOCKSIZE, 1);
-	emummc_storage_read(&emmc_storage, HOS_KEYBLOBS_OFFSET / NX_EMMC_BLOCKSIZE + ctxt->pkg1_id->kb, 1, ctxt->keyblob);
+	emummc_storage_read(HOS_KEYBLOBS_OFFSET / NX_EMMC_BLOCKSIZE + ctxt->pkg1_id->kb, 1, ctxt->keyblob);
 
 	return 1;
 }
@@ -599,7 +629,7 @@ static u8 *_read_emmc_pkg2(launch_ctxt_t *ctxt)
 {
 	u8 *bctBuf = NULL;
 
-	emummc_storage_set_mmc_partition(&emmc_storage, EMMC_GPP);
+	emummc_storage_set_mmc_partition(EMMC_GPP);
 
 	// Parse eMMC GPT.
 	LIST_INIT(gpt);
@@ -654,7 +684,7 @@ static bool _get_fs_exfat_compatible(link_t *info, bool *fs_is_510)
 
 	LIST_FOREACH_ENTRY(pkg2_kip1_info_t, ki, info, link)
 	{
-		if (strncmp((const char*)ki->kip1->name, "FS", 2))
+		if (strncmp((const char*)ki->kip1->name, "FS", sizeof(ki->kip1->name)))
 			continue;
 
 		if (!se_calc_sha256_oneshot(sha_buf, ki->kip1, ki->size))
@@ -710,16 +740,20 @@ int hos_launch(ini_sec_t *cfg)
 	gfx_puts("Initializing...\n\n");
 
 	// Initialize eMMC/emuMMC.
-	int res = emummc_storage_init_mmc(&emmc_storage, &emmc_sdmmc);
+	int res = emummc_storage_init_mmc();
 	if (res)
 	{
 		if (res == 2)
-			_hos_crit_error("Failed to init eMMC");
+			_hos_crit_error("Failed to init eMMC.");
 		else
-			_hos_crit_error("Failed to init emuMMC");
+			_hos_crit_error("Failed to init emuMMC.");
 
 		goto error;
 	}
+
+	// Check if SD Card is GPT.
+	if (sd_is_gpt())
+		_hos_crit_error("SD has GPT only!");
 
 	// Read package1 and the correct keyblob.
 	if (!_read_emmc_pkg1(&ctxt))
@@ -763,13 +797,17 @@ int hos_launch(ini_sec_t *cfg)
 			  (
 				(!(fuses &    ~0xF) && (ctxt.pkg1_id->fuses >=  5)) || // LAFW v2,  4.0.0+
 				(!(fuses &  ~0x3FF) && (ctxt.pkg1_id->fuses >= 11)) || // LAFW v3,  9.0.0+
-				(!(fuses & ~0x1FFF) && (ctxt.pkg1_id->fuses >= 14))    // LAFW v4, 11.0.0+
+				(!(fuses & ~0x1FFF) && (ctxt.pkg1_id->fuses >= 14)) || // LAFW v4, 11.0.0+
+				// Detection broken! Use kip1patch=nogc                // LAFW v5, 12.0.0+
+				(!(fuses & ~0x3FFF) && (ctxt.pkg1_id->fuses >= 15))    // LAFW v5, 12.0.2+
 			  )
 			)
 		|| ((emummc_enabled) &&
 			  (
-				((fuses & 0x400) &&  (ctxt.pkg1_id->fuses <= 10)) || // HOS  9.0.0+ fuses burnt.
-				((fuses & 0x2000) && (ctxt.pkg1_id->fuses <= 13))    // HOS 11.0.0+ fuses burnt.
+				((fuses & 0x400)  && (ctxt.pkg1_id->fuses <= 10)) || // HOS  9.0.0+ fuses burnt.
+				((fuses & 0x2000) && (ctxt.pkg1_id->fuses <= 13)) || // HOS 11.0.0+ fuses burnt.
+				// Detection broken! Use kip1patch=nogc              // HOS 12.0.0+
+				((fuses & 0x4000) && (ctxt.pkg1_id->fuses <= 14))    // HOS 11.0.2+ fuses burnt.
 			  )
 			))
 			config_kip1patch(&ctxt, "nogc");
@@ -843,7 +881,17 @@ int hos_launch(ini_sec_t *cfg)
 	}
 
 	// Configure and manage Warmboot binary.
-	pkg1_warmboot_config(&ctxt, warmboot_base);
+	if (!pkg1_warmboot_config(&ctxt, warmboot_base))
+	{
+		// Can only happen on T210B01.
+		_hos_crit_error("Failed to match warmboot with fuses!\nIf you continue, sleep wont work!");
+
+		gfx_puts("\nPress POWER to continue.\nPress VOL to go to the menu.\n");
+		display_backlight_brightness(h_cfg.backlight, 1000);
+
+		if (!(btn_wait() & BTN_POWER))
+			goto error;
+	}
 
 	// Replace 'warmboot.bin' if requested.
 	if (ctxt.warmboot)
@@ -1012,16 +1060,16 @@ int hos_launch(ini_sec_t *cfg)
 	case KB_FIRMWARE_VERSION_100_200:
 	case KB_FIRMWARE_VERSION_300:
 	case KB_FIRMWARE_VERSION_301:
-		se_key_acc_ctrl(12, SE_KEY_TBL_DIS_KEY_ACCESS_FLAG | SE_KEY_TBL_DIS_KEY_LOCK_FLAG);
-		se_key_acc_ctrl(13, SE_KEY_TBL_DIS_KEY_ACCESS_FLAG | SE_KEY_TBL_DIS_KEY_LOCK_FLAG);
+		se_key_acc_ctrl(12, SE_KEY_TBL_DIS_KEY_ACCESS_FLAG | SE_KEY_LOCK_FLAG);
+		se_key_acc_ctrl(13, SE_KEY_TBL_DIS_KEY_ACCESS_FLAG | SE_KEY_LOCK_FLAG);
 		bootStateDramPkg2 = 2;
 		bootStatePkg2Continue = 3;
 		break;
 	case KB_FIRMWARE_VERSION_400:
 	case KB_FIRMWARE_VERSION_500:
 	case KB_FIRMWARE_VERSION_600:
-		se_key_acc_ctrl(12, SE_KEY_TBL_DIS_KEY_ACCESS_FLAG | SE_KEY_TBL_DIS_KEY_LOCK_FLAG);
-		se_key_acc_ctrl(15, SE_KEY_TBL_DIS_KEY_ACCESS_FLAG | SE_KEY_TBL_DIS_KEY_LOCK_FLAG);
+		se_key_acc_ctrl(12, SE_KEY_TBL_DIS_KEY_ACCESS_FLAG | SE_KEY_LOCK_FLAG);
+		se_key_acc_ctrl(15, SE_KEY_TBL_DIS_KEY_ACCESS_FLAG | SE_KEY_LOCK_FLAG);
 	default:
 		bootStateDramPkg2 = 2;
 		bootStatePkg2Continue = 4;
@@ -1095,6 +1143,10 @@ int hos_launch(ini_sec_t *cfg)
 	// Flush cache and disable MMU.
 	bpmp_mmu_disable();
 	bpmp_clk_rate_set(BPMP_CLK_NORMAL);
+
+	// Scale down RAM OC if enabled.
+	if (ctxt.stock)
+		minerva_prep_boot_freq();
 
 	// emuMMC: Some cards (Sandisk U1), do not like a fast power cycle. Wait min 100ms.
 	sdmmc_storage_init_wait_sd();

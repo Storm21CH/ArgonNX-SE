@@ -688,67 +688,67 @@ void nyx_load_run()
 	if (!nyx)
 		return;
 
-	//Splash laden
-	u8* BOOTLOGO = NULL;
+	////Splash laden
+	//u8* BOOTLOGO = NULL;
 
-	struct _bmp_data
-	{
-		u32 size;
-		u32 size_x;
-		u32 size_y;
-		u32 offset;
-		u32 pos_x;
-		u32 pos_y;
-	};
+	//struct _bmp_data
+	//{
+	//	u32 size;
+	//	u32 size_x;
+	//	u32 size_y;
+	//	u32 offset;
+	//	u32 pos_x;
+	//	u32 pos_y;
+	//};
 
-	struct _bmp_data bmpData;
+	//struct _bmp_data bmpData;
 
-	u8* bitmap = NULL;
+	//u8* bitmap = NULL;
 
-	bitmap = (u8*)sd_file_read("argon/splash.bmp", NULL);//Bootlogo Custom
+	//bitmap = (u8*)sd_file_read("argon/splash.bmp", NULL);//Bootlogo Custom
 
-	if (bitmap)
-	{
-		// Get values manually to avoid unaligned access.
-		bmpData.size = bitmap[2] | bitmap[3] << 8 |
-			bitmap[4] << 16 | bitmap[5] << 24;
-		bmpData.offset = bitmap[10] | bitmap[11] << 8 |
-			bitmap[12] << 16 | bitmap[13] << 24;
-		bmpData.size_x = bitmap[18] | bitmap[19] << 8 |
-			bitmap[20] << 16 | bitmap[21] << 24;
-		bmpData.size_y = bitmap[22] | bitmap[23] << 8 |
-			bitmap[24] << 16 | bitmap[25] << 24;
-		// Sanity check.
-		if (bitmap[0] == 'B' &&
-			bitmap[1] == 'M' &&
-			bitmap[28] == 32 && // Only 32 bit BMPs allowed.
-			bmpData.size_x <= 720 &&
-			bmpData.size_y <= 1280)
-		{
-			if ((bmpData.size - bmpData.offset) <= 0x400000)
-			{
-				// Avoid unaligned access from BM 2-byte MAGIC and remove header.
-				BOOTLOGO = (u8*)malloc(0x400000);
-				memcpy(BOOTLOGO, bitmap + bmpData.offset, bmpData.size - bmpData.offset);
-				free(bitmap);
-				// Center logo if res < 720x1280.
-				bmpData.pos_x = (720 - bmpData.size_x) >> 1;
-				bmpData.pos_y = (1280 - bmpData.size_y) >> 1;
-				// Get background color from 1st pixel.
-				if (bmpData.size_x < 720 || bmpData.size_y < 1280)
-					gfx_clear_color(*(u32*)BOOTLOGO);
+	//if (bitmap)
+	//{
+	//	// Get values manually to avoid unaligned access.
+	//	bmpData.size = bitmap[2] | bitmap[3] << 8 |
+	//		bitmap[4] << 16 | bitmap[5] << 24;
+	//	bmpData.offset = bitmap[10] | bitmap[11] << 8 |
+	//		bitmap[12] << 16 | bitmap[13] << 24;
+	//	bmpData.size_x = bitmap[18] | bitmap[19] << 8 |
+	//		bitmap[20] << 16 | bitmap[21] << 24;
+	//	bmpData.size_y = bitmap[22] | bitmap[23] << 8 |
+	//		bitmap[24] << 16 | bitmap[25] << 24;
+	//	// Sanity check.
+	//	if (bitmap[0] == 'B' &&
+	//		bitmap[1] == 'M' &&
+	//		bitmap[28] == 32 && // Only 32 bit BMPs allowed.
+	//		bmpData.size_x <= 720 &&
+	//		bmpData.size_y <= 1280)
+	//	{
+	//		if ((bmpData.size - bmpData.offset) <= 0x400000)
+	//		{
+	//			// Avoid unaligned access from BM 2-byte MAGIC and remove header.
+	//			BOOTLOGO = (u8*)malloc(0x400000);
+	//			memcpy(BOOTLOGO, bitmap + bmpData.offset, bmpData.size - bmpData.offset);
+	//			free(bitmap);
+	//			// Center logo if res < 720x1280.
+	//			bmpData.pos_x = (720 - bmpData.size_x) >> 1;
+	//			bmpData.pos_y = (1280 - bmpData.size_y) >> 1;
+	//			// Get background color from 1st pixel.
+	//			if (bmpData.size_x < 720 || bmpData.size_y < 1280)
+	//				gfx_clear_color(*(u32*)BOOTLOGO);
 
-				gfx_render_bmp_argb((u32*)BOOTLOGO, bmpData.size_x, bmpData.size_y,
-					bmpData.pos_x, bmpData.pos_y);
-			}
-		}
-		else
-			free(bitmap);
-	}
+	//			gfx_render_bmp_argb((u32*)BOOTLOGO, bmpData.size_x, bmpData.size_y,
+	//				bmpData.pos_x, bmpData.pos_y);
+	//		}
+	//	}
+	//	else
+	//		free(bitmap);
+	//}
 
-	free(BOOTLOGO);
+	//free(BOOTLOGO);
 
-	display_backlight_brightness(100, 1000);//default
+	//display_backlight_brightness(100, 1000);//default
 
 	sd_end();
 	
@@ -1119,6 +1119,78 @@ void ipl_main()
 
 	// Show exception, library errors and L4T kernel panics.
 	_show_errors();
+
+
+
+
+	//Splash laden
+	sd_mount();
+	u8* BOOTLOGO = NULL;
+
+	struct _bmp_data
+	{
+		u32 size;
+		u32 size_x;
+		u32 size_y;
+		u32 offset;
+		u32 pos_x;
+		u32 pos_y;
+	};
+
+	struct _bmp_data bmpData;
+
+	u8* bitmap = NULL;
+
+	bitmap = (u8*)sd_file_read("argon/splash.bmp", NULL);//Bootlogo Custom
+
+	if (bitmap)
+	{
+		// Get values manually to avoid unaligned access.
+		bmpData.size = bitmap[2] | bitmap[3] << 8 |
+			bitmap[4] << 16 | bitmap[5] << 24;
+		bmpData.offset = bitmap[10] | bitmap[11] << 8 |
+			bitmap[12] << 16 | bitmap[13] << 24;
+		bmpData.size_x = bitmap[18] | bitmap[19] << 8 |
+			bitmap[20] << 16 | bitmap[21] << 24;
+		bmpData.size_y = bitmap[22] | bitmap[23] << 8 |
+			bitmap[24] << 16 | bitmap[25] << 24;
+		// Sanity check.
+		if (bitmap[0] == 'B' &&
+			bitmap[1] == 'M' &&
+			bitmap[28] == 32 && // Only 32 bit BMPs allowed.
+			bmpData.size_x <= 720 &&
+			bmpData.size_y <= 1280)
+		{
+			if ((bmpData.size - bmpData.offset) <= 0x400000)
+			{
+				// Avoid unaligned access from BM 2-byte MAGIC and remove header.
+				BOOTLOGO = (u8*)malloc(0x400000);
+				memcpy(BOOTLOGO, bitmap + bmpData.offset, bmpData.size - bmpData.offset);
+				free(bitmap);
+				// Center logo if res < 720x1280.
+				bmpData.pos_x = (720 - bmpData.size_x) >> 1;
+				bmpData.pos_y = (1280 - bmpData.size_y) >> 1;
+				// Get background color from 1st pixel.
+				if (bmpData.size_x < 720 || bmpData.size_y < 1280)
+					gfx_clear_color(*(u32*)BOOTLOGO);
+
+				gfx_render_bmp_argb((u32*)BOOTLOGO, bmpData.size_x, bmpData.size_y,
+					bmpData.pos_x, bmpData.pos_y);
+			}
+		}
+		else
+			free(bitmap);
+	}
+
+	free(BOOTLOGO);
+
+	display_backlight_brightness(100, 1000);//default
+
+	//sd_end();
+
+
+
+
 
 	// Load saved configuration and auto boot if enabled.
 	_auto_launch_firmware();

@@ -125,7 +125,13 @@ static lv_res_t _create_window_dump_done(int error, char* dump_filenames)
 
 	lv_mbox_add_btns(mbox, mbox_btn_map, mbox_action); // Important. After set_text.
 
-	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &mbox_bg);
+
+	//Buttonmap Style MBOX
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_BG, &lv_style_transp);//MBOX Buttons style Hintergrund
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_REL, &btn_transp_rel);//MBOX Buttons style Release
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_PR, &btn_transp_pr);//MBOX Buttons style Pressed
+
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &mbox_bg);//MBOX Hintergrund Style ausführen
 
 	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_top(mbox, true);
@@ -314,7 +320,7 @@ static lv_res_t _tsec_keys_dump_window_action(lv_obj_t * btn)
 	{
 		char path[64];
 		emmcsn_path_impl(path, "/dumps", "tsec_keys.bin", NULL);
-		error = sd_save_to_file(tsec_keys, 0x10 * 2, path);
+		error = sd_save_to_file(tsec_keys, SE_KEY_128_SIZE * 2, path);
 
 		sd_unmount();
 	}
@@ -357,7 +363,13 @@ static lv_res_t _create_mbox_cal0(lv_obj_t *btn)
 	u32 bootloader_offset = BOOTLOADER_MAIN_OFFSET;
 	u32 pk1_offset = h_cfg.t210b01 ? sizeof(bl_hdr_t210b01_t) : 0; // Skip T210B01 OEM header.
 	u8 *pkg1 = (u8 *)malloc(BOOTLOADER_SIZE);
-	sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400);
+
+	if (!sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
+	{
+		lv_label_set_text(lb_desc, "#FFDD00 Failed to init eMMC!#");
+
+		goto out;
+	}
 	sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_BOOT0);
 
 try_load:
@@ -371,7 +383,7 @@ try_load:
 
 	if (!pkg1_id)
 	{
-		strcat(txt_buf, "#FFDD00 Unknown pkg1 version for reading#\n#FFDD00 TSEC firmware!#\n");
+		strcat(txt_buf, "#FFDD00 Unknown pkg1 version!#\n");
 		// Try backup bootloader.
 		if (bootloader_offset != BOOTLOADER_BACKUP_OFFSET)
 		{
@@ -408,9 +420,23 @@ try_load:
 			h_cfg.sept_run = true;
 		else
 		{
+			// Check that BCT is proper so sept can run.
+			u8 *bct_bldr = (u8 *)calloc(1, 512);
+			sdmmc_storage_read(&emmc_storage, 0x2200 / NX_EMMC_BLOCKSIZE, 1, bct_bldr);
+			u32 bootloader_entrypoint = *(u32 *)&bct_bldr[0x144];
+			free(bct_bldr);
+			if (bootloader_entrypoint > SEPT_PRI_ENTRY)
+			{
+				lv_label_set_text(lb_desc, "#FFDD00 Main BCT is improper! Failed to run sept.#\n"
+					"#FFDD00 Run sept with proper BCT at least once#\n#FFDD00 to cache keys.#\n");
+				goto out;
+			}
+
+			// Set boot cfg.
 			b_cfg->autoboot = 0;
 			b_cfg->autoboot_list = 0;
-			b_cfg->extra_cfg = EXTRA_CFG_NYX_BIS;
+			b_cfg->extra_cfg = EXTRA_CFG_NYX_SEPT;
+			b_cfg->sept = NYX_SEPT_CAL0;
 
 			if (!reboot_to_sept((u8 *)tsec_ctxt.fw, kb))
 			{
@@ -438,10 +464,12 @@ t210b01:;
 	LIST_INIT(gpt);
 	nx_emmc_gpt_parse(&gpt, &emmc_storage);
 	emmc_part_t *cal0_part = nx_emmc_part_find(&gpt, "PRODINFO"); // check if null
-	nx_emmc_bis_init(cal0_part);
+	nx_emmc_bis_init(cal0_part, false, 0);
 	nx_emmc_bis_read(0, 0x40, cal0_buf);
+	nx_emmc_bis_end();
+	nx_emmc_gpt_free(&gpt);
 
-	// Clear BIS keys slots.
+	// Clear BIS keys slots and reinstate SBK.
 	hos_bis_keys_clear();
 
 	nx_emmc_cal0_t *cal0 = (nx_emmc_cal0_t *)cal0_buf;
@@ -476,7 +504,7 @@ t210b01:;
 		cal0->bd_mac[0], cal0->bd_mac[1], cal0->bd_mac[2], cal0->bd_mac[3], cal0->bd_mac[4], cal0->bd_mac[5],
 		cal0->battery_lot);
 
-	u8  display_rev = (nyx_str->info.disp_id >> 8) & 0xFF;
+	u8  display_rev = (cal0->lcd_vendor >> 8) & 0xFF;
 	u32 display_id = (cal0->lcd_vendor & 0xFF) << 8 | (cal0->lcd_vendor & 0xFF0000) >> 16;
 	switch (display_id)
 	{
@@ -709,11 +737,22 @@ static lv_res_t _create_window_fuses_info_status(lv_obj_t *btn)
 	}
 
 	// Count burnt fuses.
-	u8 burnt_fuses_7 = fuse_count_burnt(fuse_read_odm(7));
-	u8 burnt_fuses_6 = fuse_count_burnt(fuse_read_odm(6));
+	//u8 burnt_fuses_7 = fuse_count_burnt(fuse_read_odm(7));
+	//u8 burnt_fuses_6 = fuse_count_burnt(fuse_read_odm(6));
+	u8 burnt_fuses_7 = bit_count(fuse_read_odm(7));
+	u8 burnt_fuses_6 = bit_count(fuse_read_odm(6));
 
-	switch (burnt_fuses_7)
+	//switch (burnt_fuses_7)
+	//{
+	// 
+	// Check if overburnt.
+	u8 burnt_fuses_hos = (fuse_read_odm(7) & ~bit_count_mask(burnt_fuses_7)) ? 255 : burnt_fuses_7;
+
+	switch (burnt_fuses_hos)
 	{
+	case 0:
+		strcpy(fuses_hos_version, "#96FF00 Golden sample#");
+		break;
 	case 1:
 		strcpy(fuses_hos_version, "1.0.0");
 		break;
@@ -754,7 +793,13 @@ static lv_res_t _create_window_fuses_info_status(lv_obj_t *btn)
 		strcpy(fuses_hos_version, "10.0.0 - 10.2.0");
 		break;
 	case 14:
-		strcpy(fuses_hos_version, "11.0.0+");
+		strcpy(fuses_hos_version, "11.0.0 - 12.0.1");
+		break;
+	case 15:
+		strcpy(fuses_hos_version, "12.0.2+");
+		break;
+	case 255:
+		strcpy(fuses_hos_version, "#FFD000 Overburnt#");
 		break;
 	default:
 		strcpy(fuses_hos_version, "#FF8000 Unknown#");
@@ -910,6 +955,9 @@ static lv_res_t _create_window_fuses_info_status(lv_obj_t *btn)
 		case 0x96:
 			strcat(txt_buf, "-AZ3");
 			break;
+		case 0x98:
+			strcat(txt_buf, "-???");
+			break;
 		default:
 			strcat(txt_buf, " #FFDD00 Contact me!#");
 			break;
@@ -953,7 +1001,8 @@ static lv_res_t _create_window_fuses_info_status(lv_obj_t *btn)
 		break;
 	}
 
-	s_printf(txt_buf + strlen(txt_buf), "\n#FF8000 ID:# [%02X] %02X [%02X]",
+	//s_printf(txt_buf + strlen(txt_buf), "\n#FF8000 ID:# [%02X] %02X [%02X]",
+	s_printf(txt_buf + strlen(txt_buf), "\n#FF8000 ID:# #96FF00 %02X# %02X #96FF00 %02X#",
 		nyx_str->info.disp_id & 0xFF, (nyx_str->info.disp_id >> 8) & 0xFF, (nyx_str->info.disp_id >> 16) & 0xFF);
 
 	touch_fw_info_t touch_fw;
@@ -966,9 +1015,18 @@ static lv_res_t _create_window_fuses_info_status(lv_obj_t *btn)
 
 		touch_panel = touch_get_panel_vendor();
 		if (touch_panel)
-			strcat(txt_buf, touch_panel->vendor);
+		{
+			if (touch_panel->idx == -2) // Touch panel not found, print gpios.
+			{
+				s_printf(txt_buf + strlen(txt_buf), "%2X%2X%2X #FFDD00 Contact me!#",
+					touch_panel->gpio0, touch_panel->gpio1, touch_panel->gpio2);
+				touch_panel = NULL;
+			}
+			else
+				strcat(txt_buf, touch_panel->vendor);
+		}
 		else
-			strcat(txt_buf, "Unknown #FFDD00 Contact me!#");
+			strcat(txt_buf, "#FFDD00 Error!#");
 
 		s_printf(txt_buf + strlen(txt_buf), "\n#FF8000 ID:# %08X (", touch_fw.fw_id);
 
@@ -1005,6 +1063,7 @@ static lv_res_t _create_window_fuses_info_status(lv_obj_t *btn)
 			break;
 		case 0x32000501:
 		case 0x33000502:
+		case 0x33000503:
 			strcat(txt_buf, "4CD UNKN");
 			if (touch_panel)
 				panel_ic_paired = touch_panel->idx == 4;
@@ -1017,6 +1076,8 @@ static lv_res_t _create_window_fuses_info_status(lv_obj_t *btn)
 		s_printf(txt_buf + strlen(txt_buf), " - %s)\n#FF8000 FTB ver:# %04X\n#FF8000 FW rev:# %04X",
 			panel_ic_paired ? "Paired" : "#FFDD00 Error#", touch_fw.ftb_ver, touch_fw.fw_rev);
 	}
+	else
+		strcat(txt_buf, "\n\n#FFDD00 Failed to get touch info!#");
 
 	// Check if patched unit.
 	if (!fuse_check_patched_rcm())
@@ -1135,7 +1196,7 @@ try_load:
 
 	if (!pkg1_id)
 	{
-		strcat(txt_buf, "#FFDD00 Unknown pkg1 version for reading#\n#FFDD00 TSEC firmware!#\n");
+		strcat(txt_buf, "#FFDD00 Unknown pkg1 version!#\n");
 		// Try backup bootloader.
 		if (bootloader_offset != BOOTLOADER_BACKUP_OFFSET)
 		{
@@ -1235,6 +1296,262 @@ out:
 	return LV_RES_OK;
 }
 
+/*static lv_res_t _create_mbox_benchmark(bool sd_bench)
+{
+	sdmmc_storage_t *storage;
+
+	lv_obj_t *dark_bg = lv_obj_create(lv_scr_act(), NULL);
+	lv_obj_set_style(dark_bg, &mbox_darken);
+	lv_obj_set_size(dark_bg, LV_HOR_RES, LV_VER_RES);
+
+	static const char * mbox_btn_map[] = { "\211", "\222OK", "\211", "" };
+	lv_obj_t * mbox = lv_mbox_create(dark_bg, NULL);
+	lv_mbox_set_recolor_text(mbox, true);
+	lv_obj_set_width(mbox, LV_HOR_RES / 7 * 4);
+
+	char *txt_buf = (char *)malloc(0x4000);
+
+	s_printf(txt_buf, "#FF8000 %s Benchmark#\n[Raw Reads] Abort: VOL- & VOL+",
+		sd_bench ? "SD Card" : "eMMC");
+
+	lv_mbox_set_text(mbox, txt_buf);
+	txt_buf[0] = 0;
+
+	lv_obj_t *h1 = lv_cont_create(mbox, NULL);
+	lv_cont_set_fit(h1, false, true);
+	lv_cont_set_style(h1, &lv_style_transp_tight);
+	lv_obj_set_width(h1, lv_obj_get_width(mbox) - LV_DPI / 10);
+
+	lv_obj_t *lbl_status = lv_label_create(h1, NULL);
+	lv_label_set_style(lbl_status, &monospace_text);
+	lv_label_set_recolor(lbl_status, true);
+	lv_label_set_text(lbl_status, " ");
+	lv_obj_align(lbl_status, h1, LV_ALIGN_IN_TOP_MID, 0, 0);
+
+	lv_obj_t *bar = lv_bar_create(mbox, NULL);
+	lv_obj_set_size(bar, LV_DPI * 2, LV_DPI / 5);
+	lv_bar_set_range(bar, 0, 100);
+	lv_bar_set_value(bar, 0);
+
+	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+	lv_obj_set_top(mbox, true);
+	manual_system_maintenance(true);
+
+	int res = 0;
+
+	if (sd_bench)
+	{
+		storage = &sd_storage;
+
+		// Re-initialize to update trimmers.
+		sd_end();
+		res = !sd_mount();
+	}
+	else
+	{
+		storage = &emmc_storage;
+		res = !sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400);
+		if (!res)
+			sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_GPP);
+	}
+
+	if (res)
+		lv_mbox_set_text(mbox, "#FFDD00 Failed to init Storage!#");
+	else
+	{
+		int error = 0;
+		u32 iters = 3;
+		u32 offset_chunk_start = ALIGN_DOWN(storage->sec_cnt / 3, 0x8000); // Align to 16MB.
+		if (storage->sec_cnt < 0xC00000)
+			iters -= 2; // 4GB card.
+
+		for (u32 iter_curr = 0; iter_curr < iters; iter_curr++)
+		{
+			u32 pct = 0;
+			u32 prevPct = 200;
+			u32 timer = 0;
+			u32 lba_curr = 0;
+			u32 sector = offset_chunk_start * iter_curr;
+			u32 sector_num = 0x8000;       // 16MB chunks.
+			u32 data_remaining = 0x200000; // 1GB.
+
+			s_printf(txt_buf + strlen(txt_buf), "#C7EA46 %d/3# - Sector Offset #C7EA46 %08X#:\n", iter_curr + 1, sector);
+
+			while (data_remaining)
+			{
+				u32 time_taken = get_tmr_us();
+				error = !sdmmc_storage_read(storage, sector + lba_curr, sector_num, (u8 *)MIXD_BUF_ALIGNED);
+				time_taken = get_tmr_us() - time_taken;
+				timer += time_taken;
+
+				manual_system_maintenance(false);
+				data_remaining -= sector_num;
+				lba_curr += sector_num;
+
+				pct = (lba_curr * 100) / 0x200000;
+				if (pct != prevPct)
+				{
+					lv_bar_set_value(bar, pct);
+					manual_system_maintenance(true);
+
+					prevPct = pct;
+
+					if (btn_read_vol() == (BTN_VOL_UP | BTN_VOL_DOWN))
+						error = -1;
+				}
+
+				if (error)
+					goto error;
+			}
+			lv_bar_set_value(bar, 100);
+
+			u32 rate_1k = ((u64)1024 * 1000 * 1000 * 1000) / timer;
+			s_printf(txt_buf + strlen(txt_buf),
+				" Sequential 16MiB - Rate: #C7EA46 %3d.%02d MiB/s#\n",
+				rate_1k / 1000, (rate_1k % 1000) / 10);
+			lv_label_set_text(lbl_status, txt_buf);
+			lv_obj_align(lbl_status, NULL, LV_ALIGN_CENTER, 0, 0);
+			lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+			manual_system_maintenance(true);
+
+			pct = 0;
+			prevPct = 200;
+			timer = 0;
+			lba_curr = 0;
+			sector_num = 8;            // 4KB chunks.
+			data_remaining = 0x100000; // 512MB.
+
+			while (data_remaining)
+			{
+				u32 time_taken = get_tmr_us();
+				error = !sdmmc_storage_read(storage, sector + lba_curr, sector_num, (u8 *)MIXD_BUF_ALIGNED);
+				time_taken = get_tmr_us() - time_taken;
+				timer += time_taken;
+
+				manual_system_maintenance(false);
+				data_remaining -= sector_num;
+				lba_curr += sector_num;
+
+				pct = (lba_curr * 100) / 0x100000;
+				if (pct != prevPct)
+				{
+					lv_bar_set_value(bar, pct);
+					manual_system_maintenance(true);
+
+					prevPct = pct;
+
+					if (btn_read_vol() == (BTN_VOL_UP | BTN_VOL_DOWN))
+						error = -1;
+				}
+
+				if (error)
+					goto error;
+			}
+			lv_bar_set_value(bar, 100);
+
+			rate_1k = ((u64)512 * 1000 * 1000 * 1000) / timer;
+			u32 iops_1k = ((u64)512 * 1024 * 1000 * 1000 * 1000) / (4096 / 1024) / timer / 1000;
+			s_printf(txt_buf + strlen(txt_buf),
+				" Sequential  4KiB - Rate: #C7EA46 %3d.%02d MiB/s#, IOPS: #C7EA46 %4d#\n",
+				rate_1k / 1000, (rate_1k % 1000) / 10, iops_1k);
+			lv_label_set_text(lbl_status, txt_buf);
+			lv_obj_align(lbl_status, NULL, LV_ALIGN_CENTER, 0, 0);
+			lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+			manual_system_maintenance(true);
+
+			u32 lba_idx = 0;
+			u32 *random_offsets = malloc(0x20000 * sizeof(u32));
+			u32  random_numbers[4];
+			for (u32 i = 0; i < 0x20000; i += 4)
+			{
+				// Generate new random numbers.
+				while (!se_gen_prng128(random_numbers))
+					;
+				// Clamp offsets to 512MBrange.
+				random_offsets[i + 0] = random_numbers[0] % 0x100000;
+				random_offsets[i + 1] = random_numbers[1] % 0x100000;
+				random_offsets[i + 2] = random_numbers[2] % 0x100000;
+				random_offsets[i + 3] = random_numbers[3] % 0x100000;
+			}
+
+			pct = 0;
+			prevPct = 200;
+			timer = 0;
+			data_remaining = 0x100000; // 512MB.
+
+			while (data_remaining)
+			{
+				u32 time_taken = get_tmr_us();
+				error = !sdmmc_storage_read(storage, sector + random_offsets[lba_idx], sector_num, (u8 *)MIXD_BUF_ALIGNED);
+				time_taken = get_tmr_us() - time_taken;
+				timer += time_taken;
+
+				manual_system_maintenance(false);
+				data_remaining -= sector_num;
+				lba_idx++;
+
+				pct = (lba_idx * 100) / 0x20000;
+				if (pct != prevPct)
+				{
+					lv_bar_set_value(bar, pct);
+					manual_system_maintenance(true);
+
+					prevPct = pct;
+
+					if (btn_read_vol() == (BTN_VOL_UP | BTN_VOL_DOWN))
+						error = -1;
+				}
+
+				if (error)
+				{
+					free(random_offsets);
+					goto error;
+				}
+			}
+			lv_bar_set_value(bar, 100);
+
+			// Calculate rate and IOPS for 512MB transfer.
+			rate_1k = ((u64)512 * 1000 * 1000 * 1000) / timer;
+			iops_1k = ((u64)512 * 1024 * 1000 * 1000 * 1000) / (4096 / 1024) / timer / 1000;
+			s_printf(txt_buf + strlen(txt_buf),
+				" Random      4KiB - Rate: #C7EA46 %3d.%02d MiB/s#, IOPS: #C7EA46 %4d#\n",
+				rate_1k / 1000, (rate_1k % 1000) / 10, iops_1k);
+			if (iter_curr == iters - 1)
+				txt_buf[strlen(txt_buf) - 1] = 0; // Cut off last line change.
+			lv_label_set_text(lbl_status, txt_buf);
+			lv_obj_align(lbl_status, NULL, LV_ALIGN_CENTER, 0, 0);
+			lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+			manual_system_maintenance(true);
+			free(random_offsets);
+		}
+
+error:
+		if (error)
+		{
+			if (error == -1)
+				s_printf(txt_buf + strlen(txt_buf), "\n#FFDD00 Aborted!#");
+			else
+				s_printf(txt_buf + strlen(txt_buf), "\n#FFDD00 IO Error occurred!#");
+
+			lv_label_set_text(lbl_status, txt_buf);
+			lv_obj_align(lbl_status, NULL, LV_ALIGN_CENTER, 0, 0);
+		}
+
+		lv_obj_del(bar);
+
+		if (sd_bench)
+			sd_unmount();
+		else
+			sdmmc_storage_end(&emmc_storage);
+	}
+	free(txt_buf);
+
+	lv_mbox_add_btns(mbox, mbox_btn_map, mbox_action); // Important. After set_text.
+	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+
+	return LV_RES_OK;
+}*/
+
 //MBOX SD Benchmark
 static lv_res_t _create_mbox_benchmark(bool sd_bench)
 {
@@ -1265,7 +1582,9 @@ static lv_res_t _create_mbox_benchmark(bool sd_bench)
 	lv_mbox_set_recolor_text(mbox, true);
 	lv_obj_set_width(mbox, LV_HOR_RES / 7 * 5);
 
-	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &mbox_bg);
+
+
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &mbox_bg);//MBOX Hintergrund Style ausführen
 
 	char* txt_buf = (char*)malloc(0x1000);
 
@@ -1363,10 +1682,18 @@ static lv_res_t _create_mbox_benchmark(bool sd_bench)
 			sdmmc_storage_end(&emmc_storage);
 	}
 
+
+
 	lv_mbox_add_btns(mbox, mbox_btn_map, mbox_action); // Important. After set_text.
+
+	//Buttonmap Style MBOX - Wichtig hier sonst error!!!!!!!!!!!!!!!!!!!
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_BG, &lv_style_transp);//MBOX Buttons style Hintergrund
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_REL, &btn_transp_rel);//MBOX Buttons style Release
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_PR, &btn_transp_pr);//MBOX Buttons style Pressed
 
 	return LV_RES_OK;
 }
+
 
 static lv_res_t _create_mbox_emmc_bench(lv_obj_t * btn)
 {
@@ -1394,14 +1721,11 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 	lv_label_set_long_mode(lb_desc, LV_LABEL_LONG_BREAK);
 	lv_label_set_recolor(lb_desc, true);
 
-	sdmmc_storage_t storage;
-	sdmmc_t sdmmc;
-
 	char *txt_buf = (char *)malloc(0x4000);
 	txt_buf[0] = '\n';
 	txt_buf[1] = 0;
 
-	if (!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
+	if (!sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
 	{
 		lv_label_set_text(lb_desc, "#FFDD00 Failed to init eMMC!#");
 		lv_obj_set_width(lb_desc, lv_obj_get_width(desc));
@@ -1412,14 +1736,15 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 		char *rsvd_blocks;
 		char life_a_txt[8];
 		char life_b_txt[8];
-		u32 life_a = storage.ext_csd.dev_life_est_a;
-		u32 life_b = storage.ext_csd.dev_life_est_b;
-		u16 card_type = storage.ext_csd.card_type;
+		u32 cache = emmc_storage.ext_csd.cache_size;
+		u32 life_a = emmc_storage.ext_csd.dev_life_est_a;
+		u32 life_b = emmc_storage.ext_csd.dev_life_est_b;
+		u16 card_type = emmc_storage.ext_csd.card_type;
 		char card_type_support[96];
 		card_type_support[0] = 0;
 
 		// Identify manufacturer. Only official eMMCs.
-		switch (storage.cid.manfid)
+		switch (emmc_storage.cid.manfid)
 		{
 		case 0x11:
 			strcat(txt_buf, "Toshiba ");
@@ -1427,16 +1752,20 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 		case 0x15:
 			strcat(txt_buf, "Samsung ");
 			break;
+		case 0x45: // Unofficial.
+			strcat(txt_buf, "SanDisk ");
+			break;
 		case 0x90:
 			strcat(txt_buf, "SK Hynix ");
 			break;
 		}
 
-		s_printf(txt_buf + strlen(txt_buf), "(%02X)\n%X\n%02X\n%c%c%c%c%c%c\n%X\n%04X\n%02d/%04d\n\n",
-			storage.cid.manfid, storage.cid.card_bga, storage.cid.oemid,
-			storage.cid.prod_name[0], storage.cid.prod_name[1], storage.cid.prod_name[2],
-			storage.cid.prod_name[3], storage.cid.prod_name[4],	storage.cid.prod_name[5],
-			storage.cid.prv, storage.cid.serial, storage.cid.month, storage.cid.year);
+		s_printf(txt_buf + strlen(txt_buf), "(%02X)\n%c%c%c%c%c%c\n%d.%d\n%04X\n%02d/%04d\n\n",
+			emmc_storage.cid.manfid,
+			emmc_storage.cid.prod_name[0], emmc_storage.cid.prod_name[1], emmc_storage.cid.prod_name[2],
+			emmc_storage.cid.prod_name[3], emmc_storage.cid.prod_name[4],	emmc_storage.cid.prod_name[5],
+			emmc_storage.cid.prv & 0xF, emmc_storage.cid.prv >> 4,
+			emmc_storage.cid.serial, emmc_storage.cid.month, emmc_storage.cid.year);
 
 		if (card_type & EXT_CSD_CARD_TYPE_HS_26)
 		{
@@ -1468,7 +1797,7 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 		strcpy(life_b_txt, "-");
 
 		// Normalize cells life.
-		if (life_a)
+		if (life_a) // SK Hynix is 0 (undefined).
 		{
 			life_a--;
 			life_a = (10 - life_a) * 10;
@@ -1482,7 +1811,7 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 			s_printf(life_b_txt, "%d%%", life_b);
 		}
 
-		switch (storage.ext_csd.pre_eol_info)
+		switch (emmc_storage.ext_csd.pre_eol_info)
 		{
 		case 1:
 			rsvd_blocks = "Normal (< 80%)";
@@ -1491,7 +1820,7 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 			rsvd_blocks = "Warning (> 80%)";
 			break;
 		case 3:
-			rsvd_blocks = "Urgent (> 90%)";
+			rsvd_blocks = "Critical (> 90%)";
 			break;
 		default:
 			rsvd_blocks = "#FF8000 Unknown#";
@@ -1499,25 +1828,28 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 		}
 
 		s_printf(txt_buf + strlen(txt_buf),
-			"#00DDFF V1.%d (rev 1.%d)#\n%02X\n%d MB/s (%d MHz)\n%d MB/s\n%s\nA: %s, B: %s\n%s",
-			storage.ext_csd.ext_struct, storage.ext_csd.rev,
-			storage.csd.cmdclass, speed & 0xFFFF, (speed >> 16) & 0xFFFF,
-			storage.csd.busspeed, card_type_support, life_a_txt, life_b_txt, rsvd_blocks);
+			"#00DDFF V1.%d (rev 1.%d)#\n%02X\n%d MB/s (%d MHz)\n%d MB/s\n%s\n%d %s\n%d MiB\nA: %s, B: %s\n%s",
+			emmc_storage.ext_csd.ext_struct, emmc_storage.ext_csd.rev,
+			emmc_storage.csd.cmdclass, speed & 0xFFFF, (speed >> 16) & 0xFFFF,
+			emmc_storage.csd.busspeed, card_type_support,
+			!(cache % 1024) ? (cache / 1024) : cache, !(cache % 1024) ? "MiB" : "KiB",
+			emmc_storage.ext_csd.max_enh_mult * 512 / 1024,
+			life_a_txt, life_b_txt, rsvd_blocks);
 
 		lv_label_set_static_text(lb_desc,
 			"#00DDFF CID:#\n"
 			"Vendor ID:\n"
-			"Card/BGA:\n"
-			"OEM ID:\n"
 			"Model:\n"
-			"Prd Rev:\n"
+			"Prod Rev:\n"
 			"S/N:\n"
 			"Month/Year:\n\n"
-			"#00DDFF Ext CSD#\n"
+			"#00DDFF Ext CSD:#\n"
 			"Cmd Classes:\n"
 			"Max Rate:\n"
 			"Current Rate:\n"
 			"Type Support:\n\n"
+			"Write Cache:\n"
+			"Enhanced Area:\n"
 			"Estimated Life:\n"
 			"Reserved Used:"
 		);
@@ -1539,32 +1871,32 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 		lv_obj_t * lb_desc2 = lv_label_create(desc2, lb_desc);
 		lv_label_set_style(lb_desc2, &monospace_text);
 
-		u32 boot_size = storage.ext_csd.boot_mult << 17;
-		u32 rpmb_size = storage.ext_csd.rpmb_mult << 17;
-		s_printf(txt_buf, "#00DDFF eMMC Physical Partitions:#\n");
-		s_printf(txt_buf + strlen(txt_buf), "1: #96FF00 BOOT0# Size: %5d KiB (Sect: 0x%08X)\n", boot_size / 1024, boot_size / 512);
-		s_printf(txt_buf + strlen(txt_buf), "2: #96FF00 BOOT1# Size: %5d KiB (Sect: 0x%08X)\n", boot_size / 1024, boot_size / 512);
-		s_printf(txt_buf + strlen(txt_buf), "3: #96FF00 RPMB#  Size: %5d KiB (Sect: 0x%08X)\n", rpmb_size / 1024, rpmb_size / 512);
-		s_printf(txt_buf + strlen(txt_buf), "0: #96FF00 GPP#   Size: %5d MiB (Sect: 0x%08X)\n\n", storage.sec_cnt >> SECTORS_TO_MIB_COEFF, storage.sec_cnt);
-		s_printf(txt_buf + strlen(txt_buf), "#00DDFF GPP (eMMC USER) Partition Table:#\n");
+		u32 boot_size = emmc_storage.ext_csd.boot_mult << 17;
+		u32 rpmb_size = emmc_storage.ext_csd.rpmb_mult << 17;
+		strcpy(txt_buf, "#00DDFF eMMC Physical Partitions:#\n");
+		s_printf(txt_buf + strlen(txt_buf), "1: #96FF00 BOOT0# Size: %6d KiB (Sect: 0x%08X)\n", boot_size / 1024, boot_size / 512);
+		s_printf(txt_buf + strlen(txt_buf), "2: #96FF00 BOOT1# Size: %6d KiB (Sect: 0x%08X)\n", boot_size / 1024, boot_size / 512);
+		s_printf(txt_buf + strlen(txt_buf), "3: #96FF00 RPMB#  Size: %6d KiB (Sect: 0x%08X)\n", rpmb_size / 1024, rpmb_size / 512);
+		s_printf(txt_buf + strlen(txt_buf), "0: #96FF00 GPP#   Size: %6d MiB (Sect: 0x%08X)\n", emmc_storage.sec_cnt >> SECTORS_TO_MIB_COEFF, emmc_storage.sec_cnt);
+		strcat(txt_buf, "\n#00DDFF GPP (eMMC USER) Partition Table:#\n");
 
-		sdmmc_storage_set_mmc_partition(&storage, EMMC_GPP);
+		sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_GPP);
 		LIST_INIT(gpt);
-		nx_emmc_gpt_parse(&gpt, &storage);
+		nx_emmc_gpt_parse(&gpt, &emmc_storage);
 
 		u32 idx = 0;
 		LIST_FOREACH_ENTRY(emmc_part_t, part, &gpt, link)
 		{
 			if (idx > 10)
 			{
-				strcat(txt_buf, "#FFDD00 Table truncated!#");
+				strcat(txt_buf, "#FFDD00 Table does not fit on screen!#");
 				break;
 			}
 
 			if (part->index < 2)
 			{
-				s_printf(txt_buf + strlen(txt_buf), "%02d: #96FF00 %s# ", part->index, part->name);
-				s_printf(txt_buf + strlen(txt_buf), " Size: %d MiB (Sect: 0x%X), Start: %06X\n",
+				s_printf(txt_buf + strlen(txt_buf), "%02d: #96FF00 %s#%s Size: %d MiB (Sect: 0x%X), Start: %06X\n",
+					part->index, part->name, !part->name[8] ? " " : "",
 					(part->lba_end - part->lba_start + 1) >> SECTORS_TO_MIB_COEFF,
 					part->lba_end - part->lba_start + 1, part->lba_start);
 			}
@@ -1577,6 +1909,9 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 
 			idx++;
 		}
+		if (!idx)
+			strcat(txt_buf, "#FFDD00 Partition table is empty!#");
+
 		nx_emmc_gpt_free(&gpt);
 
 		lv_label_set_text(lb_desc2, txt_buf);
@@ -1584,7 +1919,7 @@ static lv_res_t _create_window_emmc_info_status(lv_obj_t *btn)
 		lv_obj_align(desc2, val, LV_ALIGN_OUT_RIGHT_MID, LV_DPI / 6, 0);
 	}
 
-	sdmmc_storage_end(&storage);
+	sdmmc_storage_end(&emmc_storage);
 	free(txt_buf);
 
 	return LV_RES_OK;
@@ -1617,8 +1952,8 @@ static lv_res_t _create_window_sdcard_info_status(lv_obj_t *btn)
 		lv_label_set_text(lb_desc,
 			"#00DDFF Card IDentification:#\n"
 			"Vendor ID:\n"
-			"OEM ID:\n"
 			"Model:\n"
+			"OEM ID:\n"
 			"HW rev:\n"
 			"FW rev:\n"
 			"S/N:\n"
@@ -1638,13 +1973,13 @@ static lv_res_t _create_window_sdcard_info_status(lv_obj_t *btn)
 		// Identify manufacturer.
 		switch (sd_storage.cid.manfid)
 		{
-		case 1:
+		case 0x01:
 			strcat(txt_buf, "Panasonic ");
 			break;
-		case 2:
+		case 0x02:
 			strcat(txt_buf, "Toshiba ");
 			break;
-		case 3:
+		case 0x03:
 			strcat(txt_buf, "SanDisk ");
 			break;
 		case 0x1B:
@@ -1674,12 +2009,21 @@ static lv_res_t _create_window_sdcard_info_status(lv_obj_t *btn)
 		case 0x82:
 			strcat(txt_buf, "Sony ");
 			break;
+		//TODO: Investigate which OEM/ODM makes these.
+		// case 0x9C: // LX512 SO
+		// case 0xAD: // LX512 LS
+		// 	strcat(txt_buf, "Lexar ");
+		// 	break;
+		default:
+			strcat(txt_buf, "Unknown ");
+			break;
 		}
 
-		s_printf(txt_buf + strlen(txt_buf), "(%02X)\n%c%c\n%c%c%c%c%c\n%X\n%X\n%08x\n%02d/%04d\n\n",
-			sd_storage.cid.manfid, (sd_storage.cid.oemid >> 8) & 0xFF, sd_storage.cid.oemid & 0xFF,
+		s_printf(txt_buf + strlen(txt_buf), "(%02X)\n%c%c%c%c%c\n%c%c\n%X\n%X\n%08x\n%02d/%04d\n\n",
+			sd_storage.cid.manfid,
 			sd_storage.cid.prod_name[0], sd_storage.cid.prod_name[1], sd_storage.cid.prod_name[2],
 			sd_storage.cid.prod_name[3], sd_storage.cid.prod_name[4],
+			(sd_storage.cid.oemid >> 8) & 0xFF, sd_storage.cid.oemid & 0xFF,
 			sd_storage.cid.hwrev, sd_storage.cid.fwrev, sd_storage.cid.serial,
 			sd_storage.cid.month, sd_storage.cid.year);
 
@@ -1748,7 +2092,7 @@ static lv_res_t _create_window_sdcard_info_status(lv_obj_t *btn)
 		}
 
 		bool uhs_au_mb = false;
-		u32 uhs_au_size = sd_storage_ssr_get_au(&sd_storage);
+		u32 uhs_au_size = sd_storage_get_ssr_au(&sd_storage);
 		if (uhs_au_size >= 1024)
 		{
 			uhs_au_mb = true;
@@ -2096,21 +2440,197 @@ static lv_res_t _create_window_battery_status(lv_obj_t *btn)
 	return LV_RES_OK;
 }
 
+/*void create_tab_info(lv_theme_t *th, lv_obj_t *parent)
+{
+	lv_page_set_scrl_layout(parent, LV_LAYOUT_PRETTY);
+
+	static lv_style_t h_style;
+	lv_style_copy(&h_style, &lv_style_transp);
+	h_style.body.padding.inner = 0;
+	h_style.body.padding.hor = LV_DPI - (LV_DPI / 4);
+	h_style.body.padding.ver = LV_DPI / 6;
+
+	// Create SoC Info container.
+	lv_obj_t *h1 = lv_cont_create(parent, NULL);
+	lv_cont_set_style(h1, &h_style);
+	lv_cont_set_fit(h1, false, true);
+	lv_obj_set_width(h1, (LV_HOR_RES / 9) * 4);
+	lv_obj_set_click(h1, false);
+	lv_cont_set_layout(h1, LV_LAYOUT_OFF);
+
+	lv_obj_t *label_sep = lv_label_create(h1, NULL);
+	lv_label_set_static_text(label_sep, "");
+
+	lv_obj_t *label_txt = lv_label_create(h1, NULL);
+	lv_label_set_static_text(label_txt, "SoC & HW Info");
+	lv_obj_set_style(label_txt, th->label.prim);
+	lv_obj_align(label_txt, label_sep, LV_ALIGN_OUT_BOTTOM_LEFT, LV_DPI / 4, 0);
+
+	lv_obj_t *line_sep = lv_line_create(h1, NULL);
+	static const lv_point_t line_pp[] = { {0, 0}, { LV_HOR_RES - (LV_DPI - (LV_DPI / 4)) * 2, 0} };
+	lv_line_set_points(line_sep, line_pp, 2);
+	lv_line_set_style(line_sep, th->line.decor);
+	lv_obj_align(line_sep, label_txt, LV_ALIGN_OUT_BOTTOM_LEFT, -(LV_DPI / 4), LV_DPI / 8);
+
+	// Create Bootrom button.
+	lv_obj_t *btn = lv_btn_create(h1, NULL);
+	if (hekate_bg)
+	{
+		lv_btn_set_style(btn, LV_BTN_STYLE_REL, &btn_transp_rel);
+		lv_btn_set_style(btn, LV_BTN_STYLE_PR, &btn_transp_pr);
+	}
+	lv_obj_t *label_btn = lv_label_create(btn, NULL);
+	lv_btn_set_fit(btn, true, true);
+	lv_label_set_static_text(label_btn, SYMBOL_CHIP"  Bootrom");
+	lv_obj_align(btn, line_sep, LV_ALIGN_OUT_BOTTOM_LEFT, LV_DPI / 4, LV_DPI / 4);
+	lv_btn_set_action(btn, LV_BTN_ACTION_CLICK, _create_window_bootrom_info_status);
+
+	// Create TSEC Keys button.
+	lv_obj_t *btn2 = lv_btn_create(h1, btn);
+	label_btn = lv_label_create(btn2, NULL);
+	lv_label_set_static_text(label_btn, SYMBOL_KEY"  TSEC Keys");
+	lv_obj_align(btn2, btn, LV_ALIGN_OUT_RIGHT_TOP, LV_DPI * 4 / 9, 0);
+	lv_btn_set_action(btn2, LV_BTN_ACTION_CLICK, _create_window_tsec_keys_status);
+	if (h_cfg.t210b01)
+		lv_btn_set_state(btn2, LV_BTN_STATE_INA);
+
+	lv_obj_t *label_txt2 = lv_label_create(h1, NULL);
+	lv_label_set_recolor(label_txt2, true);
+	lv_label_set_static_text(label_txt2,
+		"View Ipatches and dump the unpatched and patched versions\nof BootROM.\n"
+		"Or view and dump the device's TSEC Keys.\n");
+	lv_obj_set_style(label_txt2, &hint_small_style);
+	lv_obj_align(label_txt2, btn, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 3);
+
+	static lv_style_t line_style;
+	lv_style_copy(&line_style, th->line.decor);
+	line_style.line.color = LV_COLOR_HEX(0x444444);
+
+	line_sep = lv_line_create(h1, line_sep);
+	lv_obj_align(line_sep, label_txt2, LV_ALIGN_OUT_BOTTOM_LEFT, -(LV_DPI / 4), LV_DPI / 16);
+	lv_line_set_style(line_sep, &line_style);
+
+	// Create Fuses button.
+	lv_obj_t *btn3 = lv_btn_create(h1, btn);
+	label_btn = lv_label_create(btn3, NULL);
+	lv_btn_set_fit(btn3, true, true);
+	lv_label_set_static_text(label_btn, SYMBOL_CIRCUIT"  HW & Fuses");
+	lv_obj_align(btn3, line_sep, LV_ALIGN_OUT_BOTTOM_LEFT, LV_DPI / 4, LV_DPI / 2);
+	lv_btn_set_action(btn3, LV_BTN_ACTION_CLICK, _create_window_fuses_info_status);
+
+	// Create KFuses button.
+	lv_obj_t *btn4 = lv_btn_create(h1, btn);
+	label_btn = lv_label_create(btn4, NULL);
+	lv_label_set_static_text(label_btn, SYMBOL_SHUFFLE"  KFuses");
+	lv_obj_align(btn4, btn3, LV_ALIGN_OUT_RIGHT_TOP, LV_DPI * 46 / 100, 0);
+	lv_btn_set_action(btn4, LV_BTN_ACTION_CLICK, _kfuse_dump_window_action);
+
+	lv_obj_t *label_txt4 = lv_label_create(h1, NULL);
+	lv_label_set_recolor(label_txt4, true);
+	lv_label_set_static_text(label_txt4,
+		"View and dump the cached #C7EA46 Fuses# and #C7EA46 KFuses#.\n"
+		"Fuses contain info about the SoC/SKU and KFuses HDCP keys.\n"
+		"You can also see info about #C7EA46 DRAM#, #C7EA46 Screen# and #C7EA46 Touch panel#.");
+	lv_obj_set_style(label_txt4, &hint_small_style);
+	lv_obj_align(label_txt4, btn3, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 3);
+
+	// Create Storage & Battery Info container.
+	lv_obj_t *h2 = lv_cont_create(parent, NULL);
+	lv_cont_set_style(h2, &h_style);
+	lv_cont_set_fit(h2, false, true);
+	lv_obj_set_width(h2, (LV_HOR_RES / 9) * 4);
+	lv_obj_set_click(h2, false);
+	lv_cont_set_layout(h2, LV_LAYOUT_OFF);
+	lv_obj_align(h2, h1, LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+
+	label_sep = lv_label_create(h2, NULL);
+	lv_label_set_static_text(label_sep, "");
+
+	lv_obj_t *label_txt3 = lv_label_create(h2, NULL);
+	lv_label_set_static_text(label_txt3, "Storage & Battery Info");
+	lv_obj_set_style(label_txt3, th->label.prim);
+	lv_obj_align(label_txt3, label_sep, LV_ALIGN_OUT_BOTTOM_LEFT, LV_DPI / 4, 0);
+
+	line_sep = lv_line_create(h2, line_sep);
+	lv_obj_align(line_sep, label_txt3, LV_ALIGN_OUT_BOTTOM_LEFT, -(LV_DPI / 2), LV_DPI / 8);
+	lv_line_set_style(line_sep, th->line.decor);
+
+	// Create eMMC button.
+	lv_obj_t *btn5 = lv_btn_create(h2, NULL);
+	if (hekate_bg)
+	{
+		lv_btn_set_style(btn5, LV_BTN_STYLE_REL, &btn_transp_rel);
+		lv_btn_set_style(btn5, LV_BTN_STYLE_PR, &btn_transp_pr);
+	}
+	label_btn = lv_label_create(btn5, NULL);
+	lv_btn_set_fit(btn5, true, true);
+	lv_label_set_static_text(label_btn, SYMBOL_CHIP"  eMMC  ");
+	lv_obj_align(btn5, line_sep, LV_ALIGN_OUT_BOTTOM_LEFT, LV_DPI / 2, LV_DPI / 4);
+	lv_btn_set_action(btn5, LV_BTN_ACTION_CLICK, _create_window_emmc_info_status);
+
+	// Create microSD button.
+	lv_obj_t *btn6 = lv_btn_create(h2, btn);
+	label_btn = lv_label_create(btn6, NULL);
+	lv_label_set_static_text(label_btn, SYMBOL_SD"  microSD ");
+	lv_obj_align(btn6, btn5, LV_ALIGN_OUT_RIGHT_TOP, LV_DPI * 3 / 4, 0);
+	lv_btn_set_action(btn6, LV_BTN_ACTION_CLICK, _create_window_sdcard_info_status);
+
+	lv_obj_t *label_txt5 = lv_label_create(h2, NULL);
+	lv_label_set_recolor(label_txt5, true);
+	lv_label_set_static_text(label_txt5,
+		"View info about the eMMC or microSD and their partition list.\n"
+		"Additionally you can benchmark read speeds.");
+	lv_obj_set_style(label_txt5, &hint_small_style);
+	lv_obj_align(label_txt5, btn5, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 3);
+
+	line_sep = lv_line_create(h2, line_sep);
+	lv_obj_align(line_sep, label_txt5, LV_ALIGN_OUT_BOTTOM_LEFT, -(LV_DPI / 4), LV_DPI / 2);
+	lv_line_set_style(line_sep, &line_style);
+
+	// Create Battery button.
+	lv_obj_t *btn7 = lv_btn_create(h2, NULL);
+	if (hekate_bg)
+	{
+		lv_btn_set_style(btn7, LV_BTN_STYLE_REL, &btn_transp_rel);
+		lv_btn_set_style(btn7, LV_BTN_STYLE_PR, &btn_transp_pr);
+	}
+	label_btn = lv_label_create(btn7, NULL);
+	lv_btn_set_fit(btn7, true, true);
+	lv_label_set_static_text(label_btn, SYMBOL_BATTERY_FULL"  Battery");
+	lv_obj_align(btn7, line_sep, LV_ALIGN_OUT_BOTTOM_LEFT, LV_DPI / 4, LV_DPI / 2);
+	lv_btn_set_action(btn7, LV_BTN_ACTION_CLICK, _create_window_battery_status);
+
+	lv_obj_t *label_txt6 = lv_label_create(h2, NULL);
+	lv_label_set_recolor(label_txt6, true);
+	lv_label_set_static_text(label_txt6,
+		"View battery and battery charger related info.\n"
+		"Additionally you can dump battery charger's registers.\n");
+	lv_obj_set_style(label_txt6, &hint_small_style);
+	lv_obj_align(label_txt6, btn7, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 3);
+}*/
+
 //HW info Page in win
 lv_res_t create_win_info(lv_obj_t* btn)
 {
-	//Create a window to hold all the objects
+	//Create a window to hold all the objects, bei lv_layer_top() ist das Fenster nicht volle Bildgrösse, mit lv_scr_act() ok
 	lv_obj_t* win = lv_win_create(lv_scr_act(), NULL);
 	lv_win_set_title(win, "HW info and dumps");
-	lv_page_set_scrl_layout(lv_win_get_content(win), LV_LAYOUT_PRETTY);
-	lv_win_set_style(win, LV_WIN_STYLE_HEADER, &header_style);
-	lv_win_set_style(win, LV_WIN_STYLE_BG, &win_bg_style);
+	lv_page_set_scrl_layout(lv_win_get_content(win), LV_LAYOUT_PRETTY);//LV_LAYOUT_OFF
+	lv_win_set_style(win, LV_WIN_STYLE_HEADER, &header_style);//Header Style ausführen
+	lv_win_set_style(win, LV_WIN_STYLE_BG, &win_bg_style);//Fenster Hintergrund ausführen
+
+	//Add control button to the header OK
+	//close_btn = lv_win_add_btn(win, NULL, SYMBOL_CLOSE, lv_win_close_action_custom);//hekate
+	//lv_obj_set_style(close_btn, LV_LABEL_STYLE_MAIN);//Style Farbe close button
 
 	//Add control button to the header auch OK
-	close_btn = lv_win_add_btn(win, NULL, SYMBOL_CLOSE, lv_win_close_action);
-	lv_obj_set_style(close_btn, LV_LABEL_STYLE_MAIN);
+	//close_btn = lv_win_add_btn(win, NULL, SYMBOL_CLOSE, lv_win_close_action);//Add close button and use built-in close action
+	//lv_obj_set_style(close_btn, LV_LABEL_STYLE_MAIN);//Style Farbe close button
+	close_firstwin = lv_win_add_btn(win, NULL, SYMBOL_CLOSE, lv_win_close_action_firstwin);//Eigene definition um jeweils erstes Fenster zu schliessen kein Error mehr mit x nach autoclose Win
+	lv_obj_set_style(close_firstwin, LV_LABEL_STYLE_MAIN);//Style Farbe close button
 
-	lv_win_set_btn_size(win, 45);
+
+	lv_win_set_btn_size(win, 45);//Grösse Header Buttons definieren
 
 	//Info Page kopiert und angepasst
 	static lv_style_t h_style;
@@ -2142,7 +2662,7 @@ lv_res_t create_win_info(lv_obj_t* btn)
 	lv_obj_align(line_sep, label_txt, LV_ALIGN_OUT_BOTTOM_LEFT, -(LV_DPI / 4), LV_DPI / 8);
 
 	// Create Bootrom button.
-	btn = lv_btn_create(h1, NULL);
+	btn = lv_btn_create(h1, NULL);//	lv_obj_t* btn = lv_btn_create(h1, NULL);
 	if (hekate_bg)
 	{
 		lv_btn_set_style(btn, LV_BTN_STYLE_REL, &btn_transp_rel);
@@ -2163,7 +2683,7 @@ lv_res_t create_win_info(lv_obj_t* btn)
 
 	lv_obj_t* label_txt2 = lv_label_create(h1, NULL);
 	lv_label_set_recolor(label_txt2, true);
-	lv_label_set_static_text(label_txt2,
+	lv_label_set_static_text(label_txt2,//////////////////////////
 		"View Ipatches and dump the unpatched and patched versions\nof BootROM.\n"
 		"Or view and dump the device's TSEC Keys.\n");
 	lv_obj_set_style(label_txt2, &hint_small_style);
@@ -2194,7 +2714,7 @@ lv_res_t create_win_info(lv_obj_t* btn)
 
 	lv_obj_t* label_txt4 = lv_label_create(h1, NULL);
 	lv_label_set_recolor(label_txt4, true);
-	lv_label_set_static_text(label_txt4,
+	lv_label_set_static_text(label_txt4,//////////////////////////////
 		"View and dump the cached #C7EA46 Fuses# and #C7EA46 KFuses#.\n"
 		"Fuses contain info about the SoC/SKU and KFuses HDCP keys.\n"
 		"You can also see info about #C7EA46 DRAM#, #C7EA46 Screen# and #C7EA46 Touch panel#.");
@@ -2244,7 +2764,7 @@ lv_res_t create_win_info(lv_obj_t* btn)
 
 	lv_obj_t* label_txt5 = lv_label_create(h2, NULL);
 	lv_label_set_recolor(label_txt5, true);
-	lv_label_set_static_text(label_txt5,
+	lv_label_set_static_text(label_txt5,///////////////////////////////
 		"View info about the eMMC or microSD and their partition list.\n"
 		"Additionally you can benchmark read speeds.");
 	lv_obj_set_style(label_txt5, &hint_small_style);
@@ -2269,11 +2789,12 @@ lv_res_t create_win_info(lv_obj_t* btn)
 
 	lv_obj_t* label_txt6 = lv_label_create(h2, NULL);
 	lv_label_set_recolor(label_txt6, true);
-	lv_label_set_static_text(label_txt6,
+	lv_label_set_static_text(label_txt6,////////////////////////////
 		"View battery and battery charger related info.\n"
 		"Additionally you can dump battery charger's registers.\n");
 	lv_obj_set_style(label_txt6, &hint_small_style);
 	lv_obj_align(label_txt6, btn7, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 3);
+
 
 	return LV_RES_OK;
 }

@@ -98,7 +98,7 @@ void lv_font_builtin_init(void)
 
     
 #if USE_NUM_110 != 0
-    lv_font_add(&num_110, NULL);//NUM 110 Font
+    lv_font_add(&num_110, NULL);//NUM 110 Font USE_MALIGHT_12
 #endif
 
 

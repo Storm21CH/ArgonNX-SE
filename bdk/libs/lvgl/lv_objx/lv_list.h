@@ -55,7 +55,10 @@ typedef struct
     /*New data for this type */
     uint16_t anim_time;                          /*Scroll animation time*/
     lv_style_t *styles_btn[LV_BTN_STATE_NUM];    /*Styles of the list element buttons*/
-    lv_style_t *style_img;                       /*Style of the list element images on buttons*/
+
+    //lv_style_t *style_img;                       /*Style of the list element images on buttons*/
+    lv_style_t* style_img;                       /*Style of the list element images on buttons*/
+
     uint32_t size; /*the number of items(buttons) in the list*/
     bool single_mode; /* whether single selected mode is enabled */
 #if USE_LV_GROUP

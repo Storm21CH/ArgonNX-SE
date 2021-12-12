@@ -1,6 +1,6 @@
 /*
 * Copyright (c) 2018 naehrwert
-* Copyright (c) 2018-2020 CTCaer
+* Copyright (c) 2018-2021 CTCaer
 *
 * This program is free software; you can redistribute it and/or modify it
 * under the terms and conditions of the GNU General Public License,
@@ -18,10 +18,12 @@
 #ifndef _TYPES_H_
 #define _TYPES_H_
 
+#include <assert.h>
+
 #define NULL ((void *)0)
 
 #define ALIGN(x, a) (((x) + (a) - 1) & ~((a) - 1))
-#define ALIGN_DOWN(x, a) (((x) - ((a) - 1)) & ~((a) - 1))
+#define ALIGN_DOWN(x, a) ((x) & ~((a) - 1))
 #define BIT(n) (1U << (n))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -75,10 +77,9 @@ typedef int bool;
 #define EXTRA_CFG_PAYLOAD BIT(1)
 #define EXTRA_CFG_MODULE  BIT(2)
 
-#define EXTRA_CFG_NYX_BIS    BIT(4)
 #define EXTRA_CFG_NYX_UMS    BIT(5)
 #define EXTRA_CFG_NYX_RELOAD BIT(6)
-#define EXTRA_CFG_NYX_DUMP   BIT(7)
+#define EXTRA_CFG_NYX_SEPT   BIT(7)
 
 typedef enum _nyx_ums_type
 {
@@ -90,6 +91,13 @@ typedef enum _nyx_ums_type
 	NYX_UMS_EMUMMC_BOOT1,
 	NYX_UMS_EMUMMC_GPP
 } nyx_ums_type;
+
+typedef enum _nyx_sept_type
+{
+	NYX_SEPT_DUMP = 0,
+	NYX_SEPT_CAL0,
+	NYX_SEPT_EMUF
+} nyx_sept_type;
 
 typedef struct __attribute__((__packed__)) _boot_cfg_t
 {
@@ -104,10 +112,13 @@ typedef struct __attribute__((__packed__)) _boot_cfg_t
 			char id[8]; // 7 char ASCII null teminated.
 			char emummc_path[0x78]; // emuMMC/XXX, ASCII null teminated.
 		};
-		u8 ums; // nyx_ums_type.
+		u8 ums;  // nyx_ums_type.
+		u8 sept; // nyx_sept_type.
 		u8 xt_str[0x80];
 	};
 } boot_cfg_t;
+
+static_assert(sizeof(boot_cfg_t) == 0x84, "Boot CFG size is wrong!");
 
 typedef struct __attribute__((__packed__)) _ipl_ver_meta_t
 {

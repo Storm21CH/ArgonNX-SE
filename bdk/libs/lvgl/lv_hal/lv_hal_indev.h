@@ -148,7 +148,7 @@ typedef struct _lv_indev_proc_t {
     uint32_t longpr_rep_timestamp;  /*Long press repeat time stamp*/
 
     /*Flags*/
-    uint8_t long_pr_sent        :1;
+    uint8_t long_pr_sent        :1;//    uint8_t long_pr_sent        :1;
     uint8_t reset_query         :1;
     uint8_t disabled            :1;
 } lv_indev_proc_t;

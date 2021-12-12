@@ -72,18 +72,16 @@ static lv_obj_t *_create_container(lv_obj_t *parent)
 bool get_autorcm_status(bool change)
 {
 	u8 corr_mod0, mod1;
-	sdmmc_storage_t storage;
-	sdmmc_t sdmmc;
 	bool enabled = false;
 
 	if (h_cfg.t210b01)
 		return false;
 
-	sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400);
+	sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400);
 
 	u8 *tempbuf = (u8 *)malloc(0x200);
-	sdmmc_storage_set_mmc_partition(&storage, EMMC_BOOT0);
-	sdmmc_storage_read(&storage, 0x200 / NX_EMMC_BLOCKSIZE, 1, tempbuf);
+	sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_BOOT0);
+	sdmmc_storage_read(&emmc_storage, 0x200 / NX_EMMC_BLOCKSIZE, 1, tempbuf);
 
 	// Get the correct RSA modulus byte masks.
 	nx_emmc_get_autorcm_masks(&corr_mod0, &mod1);
@@ -104,20 +102,20 @@ bool get_autorcm_status(bool change)
 		for (i = 0; i < 4; i++)
 		{
 			sect = (0x200 + (0x4000 * i)) / NX_EMMC_BLOCKSIZE;
-			sdmmc_storage_read(&storage, sect, 1, tempbuf);
+			sdmmc_storage_read(&emmc_storage, sect, 1, tempbuf);
 
 			if (!enabled)
 				tempbuf[0x10] = 0;
 			else
 				tempbuf[0x10] = corr_mod0;
-			sdmmc_storage_write(&storage, sect, 1, tempbuf);
+			sdmmc_storage_write(&emmc_storage, sect, 1, tempbuf);
 		}
 		enabled = !(enabled);
 	}
 
 out:
 	free(tempbuf);
-	sdmmc_storage_end(&storage);
+	sdmmc_storage_end(&emmc_storage);
 
 	return enabled;
 }
@@ -299,7 +297,12 @@ static lv_res_t _create_mbox_ums(usb_ctxt_t* usbs)
 	lv_mbox_add_btns(mbox, mbox_btn_map, mbox_action);
 	lv_obj_set_width(mbox, LV_HOR_RES / 9 * 5);
 
-	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &mbox_bg);
+	//Buttonmap Style MBOX
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_BG, &lv_style_transp);//MBOX Buttons style Hintergrund
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_REL, &btn_transp_rel);//MBOX Buttons style Release
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_PR, &btn_transp_pr);//MBOX Buttons style Pressed
+
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &mbox_bg);//MBOX Hintergrund Style ausführen
 
 	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_top(mbox, true);
@@ -358,7 +361,7 @@ static lv_res_t _action_hid_jc(lv_obj_t *btn)
 	// Reduce BPMP, RAM and backlight and power off SDMMC1 to conserve power.
 	sd_end();
 	minerva_change_freq(FREQ_800);
-	bpmp_clk_rate_set(BPMP_CLK_NORMAL);
+	bpmp_freq_t prev_fid = bpmp_clk_rate_set(BPMP_CLK_NORMAL);
 	display_backlight_brightness(10, 1000);
 
 	usb_ctxt_t usbs;
@@ -370,7 +373,7 @@ static lv_res_t _action_hid_jc(lv_obj_t *btn)
 
 	// Restore BPMP, RAM and backlight.
 	minerva_change_freq(FREQ_1600);
-	bpmp_clk_rate_set(BPMP_CLK_DEFAULT_BOOST);
+	bpmp_clk_rate_set(prev_fid);
 	display_backlight_brightness(h_cfg.backlight - 20, 1000);
 
 	return LV_RES_OK;
@@ -382,7 +385,7 @@ static lv_res_t _action_hid_touch(lv_obj_t *btn)
 	// Reduce BPMP, RAM and backlight and power off SDMMC1 to conserve power.
 	sd_end();
 	minerva_change_freq(FREQ_800);
-	bpmp_clk_rate_set(BPMP_CLK_NORMAL);
+	bpmp_freq_t prev_fid = bpmp_clk_rate_set(BPMP_CLK_NORMAL);
 	display_backlight_brightness(10, 1000);
 
 	usb_ctxt_t usbs;
@@ -394,7 +397,7 @@ static lv_res_t _action_hid_touch(lv_obj_t *btn)
 
 	// Restore BPMP, RAM and backlight.
 	minerva_change_freq(FREQ_1600);
-	bpmp_clk_rate_set(BPMP_CLK_DEFAULT_BOOST);
+	bpmp_clk_rate_set(prev_fid);
 	display_backlight_brightness(h_cfg.backlight - 20, 1000);
 
 	return LV_RES_OK;
@@ -615,7 +618,7 @@ void nyx_run_ums(void *param)
 	u32 *cfg = (u32 *)param;
 
 	u8 type = (*cfg) >> 24;
-	*cfg = *cfg & 0xFFFFFF;
+	*cfg = *cfg & (~NYX_CFG_EXTRA);
 
 	// Disable read only flag.
 	usb_msc_emmc_read_only = false;
@@ -1103,19 +1106,14 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 
 	char *txt_buf  = (char *)malloc(0x4000);
 
-	tsec_ctxt_t tsec_ctxt;
-
-	sdmmc_storage_t storage;
-	sdmmc_t sdmmc;
-
-	if (!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
+	if (!sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
 	{
 		lv_label_set_text(lb_desc, "#FFDD00 Failed to init eMMC!#");
 
 		goto out_free;
 	}
 
-	sdmmc_storage_set_mmc_partition(&storage, EMMC_BOOT0);
+	sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_BOOT0);
 
 	// Read package1.
 	static const u32 BOOTLOADER_SIZE          = 0x40000;
@@ -1124,7 +1122,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 
 	char *build_date = malloc(32);
 	u32 pk1_offset =  h_cfg.t210b01 ? sizeof(bl_hdr_t210b01_t) : 0; // Skip T210B01 OEM header.
-	sdmmc_storage_read(&storage, BOOTLOADER_MAIN_OFFSET / NX_EMMC_BLOCKSIZE, BOOTLOADER_SIZE / NX_EMMC_BLOCKSIZE, pkg1);
+	sdmmc_storage_read(&emmc_storage, BOOTLOADER_MAIN_OFFSET / NX_EMMC_BLOCKSIZE, BOOTLOADER_SIZE / NX_EMMC_BLOCKSIZE, pkg1);
 
 	const pkg1_id_t *pkg1_id = pkg1_identify(pkg1 + pk1_offset, build_date);
 
@@ -1136,11 +1134,11 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 	// Dump package1 in its encrypted state if unknown.
 	if (!pkg1_id)
 	{
-		strcat(txt_buf, "#FFDD00 Unknown pkg1 version for reading#\n#FFDD00 TSEC firmware!#");
+		strcat(txt_buf, "#FFDD00 Unknown pkg1 version!#");
 		lv_label_set_text(lb_desc, txt_buf);
 		manual_system_maintenance(true);
 
-		emmcsn_path_impl(path, "/pkg1", "pkg1_enc.bin", &storage);
+		emmcsn_path_impl(path, "/pkg1", "pkg1_enc.bin", &emmc_storage);
 		if (sd_save_to_file(pkg1, BOOTLOADER_SIZE, path))
 			goto out_free;
 
@@ -1155,6 +1153,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 
 	if (!h_cfg.se_keygen_done)
 	{
+		tsec_ctxt_t tsec_ctxt;
 		tsec_ctxt.fw = (void *)(pkg1 + pkg1_id->tsec_off);
 		tsec_ctxt.pkg1 = (void *)pkg1;
 		tsec_ctxt.pkg11_off = pkg1_id->pkg11_off;
@@ -1172,9 +1171,23 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 				h_cfg.sept_run = true;
 			else
 			{
+				// Check that BCT is proper so sept can run.
+				u8 *bct_bldr = (u8 *)calloc(1, 512);
+				sdmmc_storage_read(&emmc_storage, 0x2200 / NX_EMMC_BLOCKSIZE, 1, bct_bldr);
+				u32 bootloader_entrypoint = *(u32 *)&bct_bldr[0x144];
+				free(bct_bldr);
+				if (bootloader_entrypoint > SEPT_PRI_ENTRY)
+				{
+					lv_label_set_text(lb_desc, "#FFDD00 Failed to run sept because main BCT is improper!#\n"
+						"#FFDD00 Run sept with proper BCT at least once to cache keys.#\n");
+					goto out_free;
+				}
+
+				// Set boot cfg.
 				b_cfg->autoboot = 0;
 				b_cfg->autoboot_list = 0;
-				b_cfg->extra_cfg = EXTRA_CFG_NYX_DUMP;
+				b_cfg->extra_cfg = EXTRA_CFG_NYX_SEPT;
+				b_cfg->sept = NYX_SEPT_DUMP;
 
 				if (!reboot_to_sept((u8 *)tsec_ctxt.fw, kb))
 				{
@@ -1186,7 +1199,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 
 		// Read keyblob.
 		u8 *keyblob = (u8 *)calloc(NX_EMMC_BLOCKSIZE, 1);
-		sdmmc_storage_read(&storage, HOS_KEYBLOBS_OFFSET / NX_EMMC_BLOCKSIZE + kb, 1, keyblob);
+		sdmmc_storage_read(&emmc_storage, HOS_KEYBLOBS_OFFSET / NX_EMMC_BLOCKSIZE + kb, 1, keyblob);
 
 		// Decrypt.
 		hos_keygen(keyblob, kb, &tsec_ctxt);
@@ -1238,7 +1251,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 		manual_system_maintenance(true);
 
 		// Dump package1.1.
-		emmcsn_path_impl(path, "/pkg1", "pkg1_decr.bin", &storage);
+		emmcsn_path_impl(path, "/pkg1", "pkg1_decr.bin", &emmc_storage);
 		if (sd_save_to_file(pkg1, 0x40000, path))
 			goto out_free;
 		strcat(txt_buf, "pkg1 dumped to pkg1_decr.bin\n");
@@ -1246,7 +1259,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 		manual_system_maintenance(true);
 
 		// Dump nxbootloader.
-		emmcsn_path_impl(path, "/pkg1", "nxloader.bin", &storage);
+		emmcsn_path_impl(path, "/pkg1", "nxloader.bin", &emmc_storage);
 		if (sd_save_to_file(loader, hdr_pk11->ldr_size, path))
 			goto out_free;
 		strcat(txt_buf, "NX Bootloader dumped to nxloader.bin\n");
@@ -1254,7 +1267,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 		manual_system_maintenance(true);
 
 		// Dump secmon.
-		emmcsn_path_impl(path, "/pkg1", "secmon.bin", &storage);
+		emmcsn_path_impl(path, "/pkg1", "secmon.bin", &emmc_storage);
 		if (sd_save_to_file(secmon, hdr_pk11->sm_size, path))
 			goto out_free;
 		strcat(txt_buf, "Secure Monitor dumped to secmon.bin\n");
@@ -1262,7 +1275,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 		manual_system_maintenance(true);
 
 		// Dump warmboot.
-		emmcsn_path_impl(path, "/pkg1", "warmboot.bin", &storage);
+		emmcsn_path_impl(path, "/pkg1", "warmboot.bin", &emmc_storage);
 		if (sd_save_to_file(warmboot, hdr_pk11->wb_size, path))
 			goto out_free;
 		// If T210B01, save a copy of decrypted warmboot binary also.
@@ -1271,7 +1284,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 
 			se_aes_iv_clear(13);
 			se_aes_crypt_cbc(13, 0, warmboot + 0x330, hdr_pk11->wb_size - 0x330, warmboot + 0x330, hdr_pk11->wb_size - 0x330);
-			emmcsn_path_impl(path, "/pkg1", "warmboot_dec.bin", &storage);
+			emmcsn_path_impl(path, "/pkg1", "warmboot_dec.bin", &emmc_storage);
 			if (sd_save_to_file(warmboot, hdr_pk11->wb_size, path))
 				goto out_free;
 		}
@@ -1281,10 +1294,10 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 	}
 
 	// Dump package2.1.
-	sdmmc_storage_set_mmc_partition(&storage, EMMC_GPP);
+	sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_GPP);
 	// Parse eMMC GPT.
 	LIST_INIT(gpt);
-	nx_emmc_gpt_parse(&gpt, &storage);
+	nx_emmc_gpt_parse(&gpt, &emmc_storage);
 	// Find package2 partition.
 	emmc_part_t *pkg2_part = nx_emmc_part_find(&gpt, "BCPKG2-1-Normal-Main");
 	if (!pkg2_part)
@@ -1292,17 +1305,17 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 
 	// Read in package2 header and get package2 real size.
 	u8 *tmp = (u8 *)malloc(NX_EMMC_BLOCKSIZE);
-	nx_emmc_part_read(&storage, pkg2_part, 0x4000 / NX_EMMC_BLOCKSIZE, 1, tmp);
+	nx_emmc_part_read(&emmc_storage, pkg2_part, 0x4000 / NX_EMMC_BLOCKSIZE, 1, tmp);
 	u32 *hdr_pkg2_raw = (u32 *)(tmp + 0x100);
 	u32 pkg2_size = hdr_pkg2_raw[0] ^ hdr_pkg2_raw[2] ^ hdr_pkg2_raw[3];
 	free(tmp);
 	// Read in package2.
 	u32 pkg2_size_aligned = ALIGN(pkg2_size, NX_EMMC_BLOCKSIZE);
 	pkg2 = malloc(pkg2_size_aligned);
-	nx_emmc_part_read(&storage, pkg2_part, 0x4000 / NX_EMMC_BLOCKSIZE,
+	nx_emmc_part_read(&emmc_storage, pkg2_part, 0x4000 / NX_EMMC_BLOCKSIZE,
 		pkg2_size_aligned / NX_EMMC_BLOCKSIZE, pkg2);
 #if 0
-	emmcsn_path_impl(path, "/pkg2", "pkg2_encr.bin", &storage);
+	emmcsn_path_impl(path, "/pkg2", "pkg2_encr.bin", &emmc_storage);
 	if (sd_save_to_file(pkg2, pkg2_size_aligned, path))
 		goto out;
 	gfx_puts("\npkg2 dumped to pkg2_encr.bin\n");
@@ -1334,7 +1347,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 	manual_system_maintenance(true);
 
 	// Dump pkg2.1.
-	emmcsn_path_impl(path, "/pkg2", "pkg2_decr.bin", &storage);
+	emmcsn_path_impl(path, "/pkg2", "pkg2_decr.bin", &emmc_storage);
 	if (sd_save_to_file(pkg2, pkg2_hdr->sec_size[PKG2_SEC_KERNEL] + pkg2_hdr->sec_size[PKG2_SEC_INI1], path))
 		goto out;
 	strcat(txt_buf, "pkg2 dumped to pkg2_decr.bin\n");
@@ -1342,7 +1355,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 	manual_system_maintenance(true);
 
 	// Dump kernel.
-	emmcsn_path_impl(path, "/pkg2", "kernel.bin", &storage);
+	emmcsn_path_impl(path, "/pkg2", "kernel.bin", &emmc_storage);
 	if (sd_save_to_file(pkg2_hdr->data, pkg2_hdr->sec_size[PKG2_SEC_KERNEL], path))
 		goto out;
 	strcat(txt_buf, "Kernel dumped to kernel.bin\n");
@@ -1366,7 +1379,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 	}
 
 	pkg2_ini1_t *ini1 = (pkg2_ini1_t *)(pkg2_hdr->data + ini1_off);
-	emmcsn_path_impl(path, "/pkg2", "ini1.bin", &storage);
+	emmcsn_path_impl(path, "/pkg2", "ini1.bin", &emmc_storage);
 	if (sd_save_to_file(ini1, ini1_size, path))
 		goto out;
 
@@ -1393,7 +1406,7 @@ static lv_res_t _create_window_dump_pk12_tool(lv_obj_t *btn)
 			kip1 = (pkg2_kip1_t *)kip_buffer;
 		}
 
-		emmcsn_path_impl(path, "/pkg2/ini1", filename, &storage);
+		emmcsn_path_impl(path, "/pkg2/ini1", filename, &emmc_storage);
 		if (sd_save_to_file(kip1, kip1_size, path))
 		{
 			free(kip_buffer);
@@ -1417,7 +1430,7 @@ out_free:
 	free(loader);
 	free(pkg2);
 	free(txt_buf);
-	sdmmc_storage_end(&storage);
+	sdmmc_storage_end(&emmc_storage);
 	sd_unmount();
 
 	if (kb >= KB_FIRMWARE_VERSION_620)
@@ -1503,14 +1516,14 @@ static void _create_tab_tools_emmc_pkg12(lv_theme_t *th, lv_obj_t *parent)
 	lv_label_set_static_text(label_sep, "");
 
 	lv_obj_t *label_txt3 = lv_label_create(h2, NULL);
-	lv_label_set_static_text(label_txt3, "Misc");
+	lv_label_set_static_text(label_txt3, "SD Partitions & USB");
 	lv_obj_set_style(label_txt3, th->label.prim);
 	lv_obj_align(label_txt3, label_sep, LV_ALIGN_OUT_BOTTOM_LEFT, LV_DPI / 4, -LV_DPI * 3 / 10);
 
 	line_sep = lv_line_create(h2, line_sep);
 	lv_obj_align(line_sep, label_txt3, LV_ALIGN_OUT_BOTTOM_LEFT, -(LV_DPI / 4), LV_DPI / 8);
 
-	// Create Dump Package1/2 button.
+	// Create Partition SD Card button.
 	lv_obj_t *btn3 = lv_btn_create(h2, NULL);
 	if (hekate_bg)
 	{
@@ -1519,15 +1532,15 @@ static void _create_tab_tools_emmc_pkg12(lv_theme_t *th, lv_obj_t *parent)
 	}
 	label_btn = lv_label_create(btn3, NULL);
 	lv_btn_set_fit(btn3, true, true);
-	lv_label_set_static_text(label_btn, SYMBOL_MODULES"  Dump Package1/2");
+	lv_label_set_static_text(label_btn, SYMBOL_SD"  Partition SD Card");
 	lv_obj_align(btn3, line_sep, LV_ALIGN_OUT_BOTTOM_LEFT, LV_DPI / 4, LV_DPI / 4);
-	lv_btn_set_action(btn3, LV_BTN_ACTION_CLICK, _create_window_dump_pk12_tool);
+	lv_btn_set_action(btn3, LV_BTN_ACTION_CLICK, create_window_partition_manager);
 
 	lv_obj_t *label_txt4 = lv_label_create(h2, NULL);
 	lv_label_set_recolor(label_txt4, true);
 	lv_label_set_static_text(label_txt4,
-		"Allows you to dump and decrypt pkg1 and pkg2 and further\n"
-		"split it up into their individual parts. It also dumps the kip1.\n");
+		"Allows you to partition the SD Card for using it with #C7EA46 emuMMC#,\n"
+		"#C7EA46 Android# and #C7EA46 Linux#. You can also flash Linux and Android.\n");
 	lv_obj_set_style(label_txt4, &hint_small_style);
 	lv_obj_align(label_txt4, btn3, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 3);
 
@@ -1632,6 +1645,8 @@ static void _create_tab_tools_arc_autorcm(lv_theme_t *th, lv_obj_t *parent)
 	{
 		lv_btn_set_style(btn3, LV_BTN_STYLE_REL, &btn_transp_rel);
 		lv_btn_set_style(btn3, LV_BTN_STYLE_PR, &btn_transp_pr);
+		//lv_btn_set_style(btn3, LV_BTN_STYLE_TGL_REL, &btn_transp_tgl_rel);////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		//lv_btn_set_style(btn3, LV_BTN_STYLE_TGL_PR, &btn_transp_tgl_pr);
 	}
 	label_btn = lv_label_create(btn3, NULL);
 	lv_btn_set_fit(btn3, true, true);
@@ -1677,18 +1692,18 @@ static void _create_tab_tools_arc_autorcm(lv_theme_t *th, lv_obj_t *parent)
 	lv_label_set_static_text(label_sep, "");
 	lv_obj_align(label_sep, label_txt4, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI * 11 / 7);
 
-	// Create Partition SD Card button.
+	// Create Dump Package1/2 button.
 	lv_obj_t *btn4 = lv_btn_create(h2, btn);
 	label_btn = lv_label_create(btn4, NULL);
-	lv_label_set_static_text(label_btn, SYMBOL_SD"  Partition SD Card");
+	lv_label_set_static_text(label_btn, SYMBOL_MODULES"  Dump Package1/2");
 	lv_obj_align(btn4, label_txt4, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 2);
-	lv_btn_set_action(btn4, LV_BTN_ACTION_CLICK, create_window_partition_manager);
+	lv_btn_set_action(btn4, LV_BTN_ACTION_CLICK, _create_window_dump_pk12_tool);
 
 	label_txt2 = lv_label_create(h2, NULL);
 	lv_label_set_recolor(label_txt2, true);
 	lv_label_set_static_text(label_txt2,
-		"Allows you to partition the SD Card for using it with #C7EA46 emuMMC#,\n"
-		"#C7EA46 Android# and #C7EA46 Linux#. You can also flash Linux and Android.");
+		"Allows you to dump and decrypt pkg1 and pkg2 and further\n"
+		"split it up into their individual parts. It also dumps the kip1.");
 	lv_obj_set_style(label_txt2, &hint_small_style);
 	lv_obj_align(label_txt2, btn4, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 3);
 }
@@ -1713,8 +1728,8 @@ void create_tab_tools(lv_theme_t *th, lv_obj_t *parent)
 	lv_tabview_set_sliding(tv, false);
 	lv_tabview_set_btns_pos(tv, LV_TABVIEW_BTNS_POS_BOTTOM);
 
-	lv_obj_t *tab1= lv_tabview_add_tab(tv, "eMMC "SYMBOL_DOT" Pkg1/2 "SYMBOL_DOT" USB Tools");
-	lv_obj_t *tab2 = lv_tabview_add_tab(tv, "Arch bit "SYMBOL_DOT" RCM "SYMBOL_DOT" Touch "SYMBOL_DOT" Partitions");
+	lv_obj_t *tab1= lv_tabview_add_tab(tv, "eMMC "SYMBOL_DOT" SD Partitions "SYMBOL_DOT" USB");
+	lv_obj_t *tab2 = lv_tabview_add_tab(tv, "Arch bit "SYMBOL_DOT" RCM "SYMBOL_DOT" Touch "SYMBOL_DOT" Pkg1/2");
 
 	lv_obj_t *line_sep = lv_line_create(tv, NULL);
 	static const lv_point_t line_pp[] = { {0, 0}, { 0, LV_DPI / 4} };

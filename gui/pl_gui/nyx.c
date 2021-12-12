@@ -231,7 +231,7 @@ out:
 	return LV_RES_OK;
 }
 
-//Payload loader label Button
+//Payload loader label Button fix hekate553
 lv_res_t launch_payload_btn(lv_obj_t* obj)
 {
 	lv_obj_t label = lv_obj_get_child(obj, NULL)[0];
@@ -371,8 +371,8 @@ void load_saved_configuration()
 						n_cfg.ums_emmc_rw = atoi(kv->val) == 1;
 					else if (!strcmp("jcdisable", kv->key))
 						n_cfg.jc_disable = atoi(kv->val) == 1;
-					else if (!strcmp("newpowersave", kv->key))
-						n_cfg.new_powersave = atoi(kv->val) == 1;
+					//else if (!strcmp("newpowersave", kv->key))
+						//n_cfg.new_powersave = atoi(kv->val) == 1;
 				}
 
 				break;
@@ -446,6 +446,17 @@ void nyx_init_load_res()
 	set_default_configuration();
 	set_nyx_default_configuration();
 
+	// Reset new info if magic not correct.
+	/*if (nyx_str->info.magic != NYX_NEW_INFO)
+	{
+		nyx_str->info.sd_init = 0;
+		for (u32 i = 0; i < 3; i++)
+			nyx_str->info.sd_errors[i] = 0;
+	}*/
+
+	// Clear info magic.
+	//nyx_str->info.magic = 0;
+
 	// Set display id from previous initialization.
 	display_set_decoded_panel_id(nyx_str->info.disp_id);
 
@@ -461,12 +472,15 @@ void nyx_init_load_res()
 	// Train DRAM and switch to max frequency.
 	minerva_init();
 
+	//load_saved_configuration();//nix.ini lesen deaktiviert
+
 	FIL fp;
-	f_open(&fp, "argon/sys/res.emunsw", FA_READ);
+	f_open(&fp, "argon/sys/res.emunsw", FA_READ);//f_open(&fp, "bootloader/sys/res.pak", FA_READ);//Eigene Recourcen laden//f_open(&fp, "emunandswitcher/sys/resources.emunsw", FA_READ);
 	f_read(&fp, (void*)NYX_RES_ADDR, f_size(&fp), NULL);
 	f_close(&fp);
 
-	hekate_bg = bmp_to_lvimg_obj("argon/background.bmp");
+	hekate_bg = bmp_to_lvimg_obj("argon/background.bmp");//hekate_bg = bmp_to_lvimg_obj("bootloader/res/background.bmp"); Eigenes Hintergrund Bild
+
 
 	sd_unmount();
 }

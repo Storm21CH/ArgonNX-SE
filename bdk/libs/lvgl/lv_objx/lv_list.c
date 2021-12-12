@@ -88,6 +88,10 @@ static lv_obj_t * last_clicked_btn;
  * @param copy pointer to a list object, if not NULL then the new object will be copied from it
  * @return pointer to the created list
  */
+
+
+//#include "../../../../gui/pl_gui/frontend/gui.h"//Test Symbolfarbe in gui.c definieren
+
 lv_obj_t * lv_list_create(lv_obj_t * par, const lv_obj_t * copy)
 {
     LV_LOG_TRACE("list create started");
@@ -103,13 +107,15 @@ lv_obj_t * lv_list_create(lv_obj_t * par, const lv_obj_t * copy)
     lv_mem_assert(ext);
     if(ext == NULL) return NULL;
 
-	// Important!
+    //Test Symbolfarbe in gui.c definieren, hier deaktiviert!!!!!!!!!!!!!! geht nicht!!!
+	// Important! Symbol definition für lv_list
     static lv_style_t img_btn_color;
     lv_style_copy( &img_btn_color, &lv_style_plain);
-    img_btn_color.image.color = LV_COLOR_HEX(0xDDDDDD);
+    img_btn_color.image.color = LV_COLOR_HEX(0xDDDDDD);//img_btn_color.image.color = LV_COLOR_YELLOW;//img_btn_color.image.color = LV_COLOR_HEX(0xDDDDDD);
     img_btn_color.image.intense = LV_OPA_50;
 
     img_btn_color.text.font = &interui_20;//Symbolgrösse in Liste img_btn !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
     ext->style_img = &img_btn_color;
     ext->styles_btn[LV_BTN_STATE_REL] = &lv_style_btn_rel;
@@ -242,7 +248,42 @@ lv_obj_t * lv_list_add(lv_obj_t * list, const void * img_src, const char * txt, 
     if(img_src) {
         img = lv_img_create(liste, NULL);
         lv_img_set_src(img, img_src);
-        lv_obj_set_style(img, ext->style_img);//lv_obj_set_style(img, ext->style_img);
+
+
+        //Symbol Farbe definition für lv_list Ordner Symbol sonst Style von oben lv_list_create Orginal anwenden!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        if (strcmp(img_src, SYMBOL_DIRECTORY) == 0)//Char String vergleichen und je nach dem was machen, hier wenn gleich     
+        {
+            // Important! Symbol Farbe definition für lv_list Ordner Symbol
+            static lv_style_t img_btn_gelb;
+            lv_style_copy(&img_btn_gelb, &lv_style_plain);
+            img_btn_gelb.image.color = LV_COLOR_YELLOW;//img_btn_color.image.color = LV_COLOR_HEX(0xDDDDDD);
+            img_btn_gelb.image.intense = LV_OPA_30;//img_btn_gelb.image.intense = LV_OPA_50;
+            img_btn_gelb.text.font = &interui_20;//Symbolgrösse in Liste img_btn
+
+            lv_obj_set_style(img, &img_btn_gelb);//Style gelb anwenden
+        }
+
+        //Symbol Farbe definition für lv_list Ordner Symbol sonst Style von oben lv_list_create Orginal anwenden!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        /*if (img_src == SYMBOL_DIRECTORY)//if (img_src == SYMBOL_DIRECTORY) ok aber Warnung "\xE0"
+        {
+            // Important! Symbol Farbe definition für lv_list Ordner Symbol
+            static lv_style_t img_btn_gelb;
+            lv_style_copy(&img_btn_gelb, &lv_style_plain);
+            img_btn_gelb.image.color = LV_COLOR_YELLOW;//img_btn_color.image.color = LV_COLOR_HEX(0xDDDDDD);
+            img_btn_gelb.image.intense = LV_OPA_50;
+            img_btn_gelb.text.font = &interui_20;//Symbolgrösse in Liste img_btn
+
+            lv_obj_set_style(img, &img_btn_gelb);//Style gelb anwenden
+        }*/
+
+        else 
+        {
+            lv_obj_set_style(img, ext->style_img);//lv_obj_set_style(img, ext->style_img);//Style von oben lv_list_create Orginal anwenden
+        }
+
+        //lv_obj_set_style(img, ext->style_img);//Orginal - Style von oben lv_list_create Orginal anwenden
+
+
         lv_obj_set_click(img, false);
         if(img_signal == NULL) img_signal = lv_obj_get_signal_func(img);
     }

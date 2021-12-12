@@ -145,6 +145,7 @@ typedef struct _atm_fatal_error_ctx
 #define  EXO_FLAG_USER_PMU        BIT(4)
 #define  EXO_FLAG_CAL0_BLANKING   BIT(5)
 #define  EXO_FLAG_CAL0_WRITES_SYS BIT(6)
+#define  EXO_FLAG_ENABLE_USB3     BIT(7)
 
 #define EXO_FW_VER(mj, mn, rv) (((mj) << 24) | ((mn) << 16) | ((rv) << 8))
 
@@ -152,6 +153,7 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
 {
 	u32 exo_fw_no = 0;
 	u32 exo_flags = 0;
+	bool usb3_force = false;
 	bool user_debug = false;
 	bool cal0_blanking = false;
 	bool cal0_allow_writes_sys = false;
@@ -167,17 +169,17 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
 		exo_fw_no = ctxt->pkg1_id->fuses - 1;                    // 3.0.1 - 7.0.1, 8.0.0 - 8.0.1.
 
 	if (!memcmp(ctxt->pkg1_id->id, "20190314172056", 8))         // 8.0.0 - 8.0.1.
-	    exo_fw_no++;
+		exo_fw_no++;
+
+	if (!memcmp(ctxt->pkg1_id->id, "20210129111626", 8))         // 12.0.0.
+		exo_fw_no++;
 
 	// Feed old exosphere target versioning to new.
 	if (exo_new)
 	{
 		switch (exo_fw_no)
 		{
-		case 1:
-		case 2:
-		case 3:
-		case 4:
+		case 1 ... 4:
 		case 6:
 			exo_fw_no = EXO_FW_VER(exo_fw_no, 0, 0);
 			break;
@@ -190,11 +192,8 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
 		case 7:
 			exo_fw_no = EXO_FW_VER(6, 2, 0);
 			break;
-		case 8:
-			exo_fw_no = EXO_FW_VER(7, 0, 0);
-			break;
-		case 9:
-			exo_fw_no = EXO_FW_VER(8, 0, 0);
+		case 8 ... 9:
+			exo_fw_no = EXO_FW_VER(exo_fw_no - 1, 0, 0);
 			break;
 		case 10:
 			exo_fw_no = EXO_FW_VER(8, 1, 0);
@@ -205,11 +204,8 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
 		case 12:
 			exo_fw_no = EXO_FW_VER(9, 1, 0);
 			break;
-		case 13:
-			exo_fw_no = EXO_FW_VER(10, 0, 0);
-			break;
-		case 14:
-			exo_fw_no = EXO_FW_VER(11, 0, 0);
+		case 13 ... 15:
+			exo_fw_no = EXO_FW_VER(exo_fw_no - 3, 0, 0);
 			break;
 		}
 	}
@@ -252,6 +248,34 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
 				break;
 			}
 		}
+
+		// Parse usb mtim settings. Avoid parsing if it's overridden.
+		if (ctxt->fss0_main_path && !ctxt->exo_ctx.usb3_force)
+		{
+			char set_path[256];
+			strcpy(set_path, ctxt->fss0_main_path);
+			strcat(set_path, "config/system_settings.ini");
+			LIST_INIT(sys_settings);
+			if (ini_parse(&ini_sections, set_path, false))
+			{
+				LIST_FOREACH_ENTRY(ini_sec_t, ini_sec, &ini_sections, link)
+				{
+					// Only parse usb section.
+					if (!(ini_sec->type == INI_CHOICE) || strcmp(ini_sec->name, "usb"))
+						continue;
+
+					LIST_FOREACH_ENTRY(ini_kv_t, kv, &ini_sec->kvs, link)
+					{
+						if (!strcmp("usb30_force_enabled", kv->key))
+						{
+							usb3_force = !strcmp("u8!0x1", kv->val);
+							break; // Only parse usb30_force_enabled key.
+						}
+					}
+					break;
+				}
+			}
+		}
 	}
 
 	// To avoid problems, make private debug mode always on if not semi-stock.
@@ -269,6 +293,11 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
 	// Enable user access to PMU.
 	if (ctxt->exo_ctx.user_pmu)
 		exo_flags |= EXO_FLAG_USER_PMU;
+
+	// Enable USB 3.0. Check if system_settings ini value is overridden. If not, check if enabled in ini.
+	if ((ctxt->exo_ctx.usb3_force && *ctxt->exo_ctx.usb3_force)
+			|| (!ctxt->exo_ctx.usb3_force && usb3_force))
+		exo_flags |= EXO_FLAG_ENABLE_USB3;
 
 	// Enable prodinfo blanking. Check if exo ini value is overridden. If not, check if enabled in exo ini.
 	if ((ctxt->exo_ctx.cal0_blank && *ctxt->exo_ctx.cal0_blank)

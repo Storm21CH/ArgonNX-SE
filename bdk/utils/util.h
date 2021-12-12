@@ -36,9 +36,10 @@ typedef enum
 
 typedef enum
 {
-	NYX_CFG_BIS  = BIT(5),
 	NYX_CFG_UMS  = BIT(6),
-	NYX_CFG_DUMP = BIT(7),
+	NYX_CFG_SEPT = BIT(7),
+
+	NYX_CFG_EXTRA = 0xFF << 24
 } nyx_cfg_t;
 
 typedef enum
@@ -53,6 +54,8 @@ typedef enum
 
 #define byte_swap_32(num) ((((num) >> 24) & 0xff) | (((num) << 8) & 0xff0000) | \
 						(((num) >> 8 )& 0xff00) | (((num) << 24) & 0xff000000))
+
+#define byte_swap_16(num) ((((num) >> 8) & 0xff) | (((num) << 8) & 0xff00))
 
 typedef struct _cfg_op_t
 {
@@ -82,6 +85,9 @@ typedef struct _nyx_storage_t
 	emc_table_t mtc_table[10];
 } nyx_storage_t;
 
+u8   bit_count(u32 val);
+u32  bit_count_mask(u8 bits);
+
 void exec_cfg(u32 *base, const cfg_op_t *ops, u32 num_ops);
 u32  crc32_calc(u32 crc, const u8 *buf, u32 len);
 
@@ -94,7 +100,6 @@ void msleep(u32 ms);
 void panic(u32 val);
 void power_set_state(power_state_t state);
 void power_set_state_ex(void *param);
-
 
 //String Replace Replace a pattern of string for another string
 

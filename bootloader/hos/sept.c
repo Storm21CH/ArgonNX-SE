@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 CTCaer
+ * Copyright (c) 2019-2021 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -33,6 +33,7 @@
 #include <storage/sdmmc.h>
 #include <utils/btn.h>
 #include <utils/types.h>
+#include <utils/util.h>
 
 #include <gfx_utils.h>
 
@@ -55,6 +56,7 @@ u8 warmboot_reboot[] = {
 };
 
 #define SEPT_PRI_ADDR   0x4003F000
+#define SEPT_PRI_ENTRY  0x40010340
 
 #define SEPT_PK1T_ADDR  0xC0400000
 #define SEPT_TCSZ_ADDR  (SEPT_PK1T_ADDR - 0x4)
@@ -93,23 +95,21 @@ void check_sept(ini_sec_t *cfg_sec)
 
 	u8 *pkg1 = (u8 *)calloc(1, 0x40000);
 
-	sdmmc_storage_t storage;
-	sdmmc_t sdmmc;
-	int res = emummc_storage_init_mmc(&storage, &sdmmc);
+	int res = emummc_storage_init_mmc();
 	if (res)
 	{
 		if (res == 2)
-			EPRINTF("Failed to init eMMC");
+			EPRINTF("Failed to init eMMC.");
 		else
-			EPRINTF("Failed to init emuMMC");
+			EPRINTF("Failed to init emuMMC.");
 
 		goto out_free;
 	}
 
-	emummc_storage_set_mmc_partition(&storage, EMMC_BOOT0);
+	emummc_storage_set_mmc_partition(EMMC_BOOT0);
 
 	// Read package1.
-	emummc_storage_read(&storage, 0x100000 / NX_EMMC_BLOCKSIZE, 0x40000 / NX_EMMC_BLOCKSIZE, pkg1);
+	emummc_storage_read(0x100000 / NX_EMMC_BLOCKSIZE, 0x40000 / NX_EMMC_BLOCKSIZE, pkg1);
 	const pkg1_id_t *pkg1_id = pkg1_identify(pkg1);
 	if (!pkg1_id)
 	{
@@ -129,13 +129,28 @@ void check_sept(ini_sec_t *cfg_sec)
 			goto out_free;
 		}
 
-		sdmmc_storage_end(&storage);
+		u8 *bct_bldr = (u8 *)calloc(1, 512);
+		sdmmc_storage_read(&emmc_storage, 0x2200 / NX_EMMC_BLOCKSIZE, 1, bct_bldr);
+		u32 bootloader_entrypoint = *(u32 *)&bct_bldr[0x144];
+		free(bct_bldr);
+		if (bootloader_entrypoint > SEPT_PRI_ENTRY)
+		{
+			gfx_con.mute = false;
+			EPRINTF("Failed to run sept\n""Main BCT is improper!\nRun sept with proper BCT at least once\nto cache keys.");
+			gfx_printf("\nPress any key...\n");
+			display_backlight_brightness(h_cfg.backlight, 1000);
+			msleep(500);
+			btn_wait();
+			goto out_free;
+		}
+
+		sdmmc_storage_end(&emmc_storage);
 		reboot_to_sept((u8 *)pkg1 + pkg1_id->tsec_off, pkg1_id->kb, cfg_sec);
 	}
 
 out_free:
 	free(pkg1);
-	sdmmc_storage_end(&storage);
+	sdmmc_storage_end(&emmc_storage);
 }
 
 int reboot_to_sept(const u8 *tsec_fw, u32 kb, ini_sec_t *cfg_sec)

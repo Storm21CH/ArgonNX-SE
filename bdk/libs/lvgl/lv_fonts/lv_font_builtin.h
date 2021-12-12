@@ -93,7 +93,7 @@ LV_FONT_DECLARE(hekate_symbol_120);
 
 
 #if USE_NUM_110
-LV_FONT_DECLARE(num_110);//NUM 110 Font
+LV_FONT_DECLARE(num_110);//NUM 110 Font USE_MALIGHT_12
 #endif
 
 #if USE_MABOLT_12

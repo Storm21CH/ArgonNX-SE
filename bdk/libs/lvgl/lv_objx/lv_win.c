@@ -559,7 +559,7 @@ static void lv_win_realign(lv_obj_t * win)
     if(ext->page == NULL || ext->header == NULL || ext->title == NULL) return;
 
     lv_style_t * header_style = lv_win_get_style(win, LV_WIN_STYLE_HEADER);
-    lv_obj_set_size(ext->header, lv_obj_get_width(win) - 0, ext->btn_size + 2 * header_style->body.padding.ver);
+    lv_obj_set_size(ext->header, lv_obj_get_width(win) - 0, ext->btn_size + 2 * header_style->body.padding.ver);//org     lv_obj_set_size(ext->header, lv_obj_get_width(win) - 62, ext->btn_size + 2 * header_style->body.padding.ver);
 
     bool first_btn = true;
     lv_obj_t * btn;
@@ -582,7 +582,7 @@ static void lv_win_realign(lv_obj_t * win)
 
     lv_obj_align(ext->title, NULL, LV_ALIGN_IN_LEFT_MID, ext->style_header->body.padding.hor, 0);
 
-    lv_obj_set_pos(ext->header, 0, 0);
+    lv_obj_set_pos(ext->header, 0, 0);//org    lv_obj_set_pos(ext->header, 31, 0);
 
     lv_obj_set_size(ext->page, lv_obj_get_width(win), lv_obj_get_height(win) - lv_obj_get_height(ext->header));
     lv_obj_align(ext->page, ext->header, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);

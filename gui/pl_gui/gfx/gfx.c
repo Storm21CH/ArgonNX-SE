@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018-2020 CTCaer
+ * Copyright (c) 2018-2021 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -207,6 +207,21 @@ void gfx_putc(char c)
 				cbuf++;
 			}
 			gfx_con.x += 16;
+			if (gfx_con.x > gfx_ctxt.width - 16)
+			{
+				gfx_con.x = gfx_column;
+				gfx_con.y += 16;
+				if (gfx_con.y > gfx_ctxt.height - 33)
+				{
+					gfx_con.y = 0;
+
+					if (!gfx_column)
+						gfx_column = 640;
+					else
+						gfx_column = 0;
+					gfx_con.x = gfx_column;
+				}
+			}
 		}
 		else if (c == '\n')
 		{
@@ -243,6 +258,21 @@ void gfx_putc(char c)
 				}
 			}
 			gfx_con.x += 8;
+			if (gfx_con.x > gfx_ctxt.width / 2 + gfx_column - 8)
+			{
+				gfx_con.x = gfx_column;
+				gfx_con.y += 8;
+				if (gfx_con.y > gfx_ctxt.height - 33)
+				{
+					gfx_con.y = 0;
+
+					if (!gfx_column)
+						gfx_column = 640;
+					else
+						gfx_column = 0;
+					gfx_con.x = gfx_column;
+				}
+			}
 		}
 		else if (c == '\n')
 		{
@@ -379,10 +409,12 @@ void gfx_printf(const char *fmt, ...)
 	va_end(ap);
 }
 
-void gfx_hexdump(u32 base, const u8 *buf, u32 len)
+void gfx_hexdump(u32 base, const void *buf, u32 len)
 {
 	if (gfx_con.mute)
 		return;
+
+	u8 *buff = (u8 *)buf;
 
 	u8 prevFontSize = gfx_con.fntsz;
 	gfx_con.fntsz = 8;
@@ -395,7 +427,7 @@ void gfx_hexdump(u32 base, const u8 *buf, u32 len)
 				gfx_puts("| ");
 				for(u32 j = 0; j < 0x10; j++)
 				{
-					u8 c = buf[i - 0x10 + j];
+					u8 c = buff[i - 0x10 + j];
 					if(c >= 32 && c <= 126)
 						gfx_putc(c);
 					else
@@ -405,7 +437,7 @@ void gfx_hexdump(u32 base, const u8 *buf, u32 len)
 			}
 			gfx_printf("%08x: ", base + i);
 		}
-		gfx_printf("%02x ", buf[i]);
+		gfx_printf("%02x ", buff[i]);
 		if (i == len - 1)
 		{
 			int ln = len % 0x10 != 0;
@@ -419,7 +451,7 @@ void gfx_hexdump(u32 base, const u8 *buf, u32 len)
 			gfx_puts("| ");
 			for(u32 j = 0; j < (ln ? k : k + 1); j++)
 			{
-				u8 c = buf[i - k + j];
+				u8 c = buff[i - k + j];
 				if(c >= 32 && c <= 126)
 					gfx_putc(c);
 				else

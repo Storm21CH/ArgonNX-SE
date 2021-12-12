@@ -8,7 +8,7 @@ include $(DEVKITARM)/base_rules
 
 NYX_LOAD_ADDR := 0x81000000
 NYX_MAGIC := 0x43544347 #"GCTC"
-
+#include ./../Versions.inc
 
 ################################################################################
 
@@ -27,7 +27,7 @@ OBJS = $(addprefix $(BUILDDIR)/$(TARGET)/, \
 	start.o exception_handlers.o \
 	nyx.o heap.o \
 	gfx.o \
-	gui.o gui_info.o gui_tools.o gui_emmc_tools.o gui_emummc_tools.o gui_tools_partition_manager.o \
+	gui.o gui_info.o gui_tools.o gui_options.o gui_emmc_tools.o gui_emummc_tools.o gui_tools_partition_manager.o \
 	fe_emummc_tools.o fe_emmc_tools.o \
 )
 
@@ -90,8 +90,11 @@ CUSTOMDEFINES += -DNYX -DGFX_INC=$(GFX_INC) -DFFCFG_INC=$(FFCFG_INC)
 # LvGL UART LOG.
 #CUSTOMDEFINES += -DDEBUG_UART_LV_LOG
 
+#TODO: Considering reinstating some of these when pointer warnings have been fixed.
+WARNINGS := -Wall -Wno-array-bounds -Wno-stringop-overread -Wno-stringop-overflow
+
 ARCH := -march=armv4t -mtune=arm7tdmi -mthumb-interwork
-CFLAGS = $(ARCH) -O2 -g -nostdlib -ffunction-sections -fdata-sections -fomit-frame-pointer -std=gnu11 -Wall $(CUSTOMDEFINES)
+CFLAGS = $(ARCH) -O2 -g -nostdlib -ffunction-sections -fdata-sections -fomit-frame-pointer -std=gnu11 $(WARNINGS) $(CUSTOMDEFINES)
 LDFLAGS = $(ARCH) -nostartfiles -lgcc -Wl,--nmagic,--gc-sections -Xlinker --defsym=NYX_LOAD_ADDR=$(NYX_LOAD_ADDR)
 
 ################################################################################

@@ -116,12 +116,12 @@
  *=================*/
 
 /*Input device settings*/
-#define LV_INDEV_READ_PERIOD            33                     /*Input device read period in milliseconds*/
+#define LV_INDEV_READ_PERIOD            33//33 Verlangsamt alle Eingabe Geräte                     /*Input device read period in milliseconds*/
 #define LV_INDEV_POINT_MARKER           0                      /*Mark the pressed points  (required: USE_LV_REAL_DRAW = 1)*/
 #define LV_INDEV_DRAG_LIMIT             10                     /*Drag threshold in pixels */
-#define LV_INDEV_DRAG_THROW             20                     /*Drag throw slow-down in [%]. Greater value means faster slow-down */
-#define LV_INDEV_LONG_PRESS_TIME        400                    /*Long press time in milliseconds*/
-#define LV_INDEV_LONG_PRESS_REP_TIME    1000 //Fix keyb        /*Repeated trigger period in long press [ms] */
+#define LV_INDEV_DRAG_THROW             20//20                     /*Drag throw slow-down in [%]. Greater value means faster slow-down */
+#define LV_INDEV_LONG_PRESS_TIME        400//400                    /*Long press time in milliseconds*/
+#define LV_INDEV_LONG_PRESS_REP_TIME    1000 //1000 Fix keyb        /*Repeated trigger period in long press [ms] */
 
 /*Color settings*/
 #define LV_COLOR_DEPTH         32                /*Color depth: 1/8/16/32*/
@@ -139,7 +139,7 @@
 /*Feature usage*/
 #define USE_LV_ANIMATION        1               /*1: Enable all animations*/
 #define USE_LV_SHADOW           1               /*1: Enable shadows*/
-#define USE_LV_GROUP            0               /*1: Enable object groups (for keyboards)*/
+#define USE_LV_GROUP            1               /*1: Enable object groups (for keyboards)*/    //aktiviert für List Joycon Navigation!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #define USE_LV_GPU              0               /*1: Enable GPU interface*/
 #define USE_LV_REAL_DRAW        0               /*1: Enable function which draw directly to the frame buffer instead of VDB (required if LV_VDB_SIZE = 0)*/
 #define USE_LV_FILESYSTEM       0               /*1: Enable file system (might be required for images*/
@@ -173,12 +173,26 @@
 #endif  /*USE_LV_LOG*/
 
 
+
+
+
+
+
 /*================
  *  THEME USAGE
  *================*/
 #define LV_THEME_LIVE_UPDATE    0       /*1: Allow theme switching at run time. Uses 8..10 kB of RAM*/
 
-#define USE_LV_THEME_STORM     1       //Theme initialisieren
+//#define USE_LV_THEME_HEKATE     1       //Flat theme with bold colors and light shadows hekate orginal
+
+#define USE_LV_THEME_STORM     1       //Theme initialisieren Funktioniert, muss auch in Makefile!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+
+
+
+
 
 
 /*==================
@@ -200,8 +214,16 @@
 #define USE_HEKATE_SYMBOL_120      LV_FONT_QUALITY
 
 
-#define USE_MABOLT_12      2
-#define USE_NUM_110      2
+#define USE_MABOLT_12      2//Font converter 5.3 Range html code Zeichen z.B. 32-127
+#define USE_NUM_110      2//Font converter 5.3 Range html code Zeichen z.B. 46-58 Qualität wirkt sich sehr auf die payload grösse aus, 2 ist optisch ok und ca. 15Kb
+
+
+
+
+
+
+
+
 
 /* Optionally declare your custom fonts here.
  * You can use these fonts as default font too

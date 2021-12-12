@@ -94,8 +94,8 @@ enum tree_update_mode_t
 
 enum emc_channels
 {
-	EMC_CH0 = 0,
-	EMC_CH1 = 1
+	EMC_CHANNEL0 = 0,
+	EMC_CHANNEL1 = 1
 };
 
 enum EMC_2X_CLK_SRC
@@ -139,8 +139,5 @@ void _minerva_do_over_temp_compensation(mtc_config_t *mtc_cfg);
 /* Periodic compensation only for tight timings that need it. Run every 100ms. */
 /* Over temp and periodic compensation, should not access EMC_MRR at the same time. */
 u32  _minerva_do_periodic_compensation(emc_table_t *mtc_table_entry);
-
-/* Main function used to access all Minerva functions. */
-void _minerva_init(mtc_config_t *mtc_cfg, void* bp);
 
 #endif

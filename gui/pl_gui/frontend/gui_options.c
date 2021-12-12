@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 CTCaer
+ * Copyright (c) 2018-2021 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -336,7 +336,7 @@ static lv_res_t _save_nyx_options_action(lv_obj_t *btn)
 	lv_obj_t * mbox = lv_mbox_create(lv_scr_act(), NULL);
 	lv_mbox_set_recolor_text(mbox, true);
 
-	int res = !create_nyx_config_entry();
+	int res = !create_nyx_config_entry(true);
 
 	nyx_changes_made = false;
 
@@ -400,7 +400,7 @@ static lv_res_t _save_theme_color_action(lv_obj_t *btn)
 	n_cfg.themecolor = color_test.hue;
 
 	// Save nyx config.
-	create_nyx_config_entry();
+	create_nyx_config_entry(true);
 
 	reload_nyx();
 
@@ -622,6 +622,8 @@ static lv_res_t _action_clock_edit(lv_obj_t *btns, const char * txt)
 		u32 new_epoch = max77620_rtc_date_to_epoch(&time);
 
 		n_cfg.timeoff = new_epoch - epoch;
+		if (!n_cfg.timeoff)
+			n_cfg.timeoff = 1;
 
 		nyx_changes_made = true;
 	}
@@ -842,10 +844,10 @@ disabled:;
 
 		// Check if pairing info was found.
 		if (joycon_found == 2)
-			strcat(txt_buf, "#C7EA46 Found 2 out of 2 Joy-Con pairing data!#\n");
+			strcat(txt_buf, "#C7EA46 Success!#\n#C7EA46 Found 2 out of 2 Joy-Con pairing data!#\n");
 		else
 		{
-			s_printf(txt_buf + strlen(txt_buf), "#FF8000 Warning:# Found #FFDD00 %d out of 2# pairing data!\n", joycon_found);
+			s_printf(txt_buf + strlen(txt_buf), "#FF8000 Failed!#\n#FF8000 Warning:# Found #FFDD00 %d out of 2# pairing data!\n", joycon_found);
 			success = false;
 		}
 
@@ -1157,8 +1159,8 @@ void create_tab_options(lv_theme_t *th, lv_obj_t *parent)
 	{
 		lv_btn_set_style(btn, LV_BTN_STYLE_REL, &btn_transp_rel);
 		lv_btn_set_style(btn, LV_BTN_STYLE_PR, &btn_transp_pr);
-		lv_btn_set_style(btn, LV_BTN_STYLE_TGL_REL, &btn_transp_tgl_rel);
-		lv_btn_set_style(btn, LV_BTN_STYLE_TGL_PR, &btn_transp_tgl_pr);
+		//lv_btn_set_style(btn, LV_BTN_STYLE_TGL_REL, &btn_transp_tgl_rel);//////////////////////////////////////////////////////////////////////////////////////////////////
+		//lv_btn_set_style(btn, LV_BTN_STYLE_TGL_PR, &btn_transp_tgl_pr);
 	}
 	lv_btn_set_layout(btn, LV_LAYOUT_OFF);
 	lv_obj_t *label_btn = lv_label_create(btn, NULL);
@@ -1206,10 +1208,10 @@ void create_tab_options(lv_theme_t *th, lv_obj_t *parent)
 
 	if (hekate_bg)
 	{
-		lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_BG, &ddlist_transp_bg);
-		lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_BGO, &ddlist_transp_bg);
-		lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_PR, &ddlist_transp_sel);
-		lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_SEL, &ddlist_transp_sel);
+		//lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_BG, &ddlist_transp_bg);//////////////////////////////////////////////////////////////////////////////////
+		//lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_BGO, &ddlist_transp_bg);
+		//lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_PR, &ddlist_transp_sel);
+		//lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_SEL, &ddlist_transp_sel);
 	}
 
 	label_txt2 = lv_label_create(l_cont, NULL);

@@ -39,7 +39,7 @@ typedef struct _emmc_tool_gui_t
 
 extern lv_obj_t* payload_list;
 extern lv_obj_t* autorcm_btn;
-extern lv_obj_t* close_btn;
+extern lv_obj_t* close_btn;//Close Button in anderen Dateien
 
 extern lv_img_dsc_t* icon_switch;
 extern lv_img_dsc_t* icon_payload;
@@ -72,6 +72,8 @@ void manual_system_maintenance(bool refresh);
 //Zusätzliche Funktionen
 lv_obj_t* gui_create_standard_window(const char* win_title);
 void gui_load_and_run();
+extern lv_obj_t* close_firstwin;//Close Button in anderen Dateien
+lv_res_t lv_win_close_action_firstwin(lv_obj_t* btn);//Close Action für erstes Fenster
 
 //Statische default Styles
 extern lv_style_t mbox_darken;
@@ -93,5 +95,6 @@ extern lv_style_t font20green_style;
 extern lv_style_t labels_style;
 extern lv_style_t inv_label;
 
+//extern lv_style_t img_btn_color;//Test Symbolfarbe list
 
 #endif

@@ -62,6 +62,7 @@ static bool do_reload = false;
 lv_obj_t* payload_list;
 lv_obj_t* autorcm_btn;
 lv_obj_t* close_btn;
+lv_obj_t* close_firstwin;//Statisch Close Button für erstes Fenster
 
 lv_img_dsc_t* icon_switch;
 lv_img_dsc_t* icon_payload;
@@ -407,6 +408,13 @@ static bool _fts_touch_read(lv_indev_data_t* data)
 	return false; // No buffering so no more data read.
 }
 
+//Filemanager Global hier für Joycon Bedienung
+static lv_obj_t* list;//Dateiliste global
+static lv_obj_t* btn_back;//Folder Back btn global
+
+#include <utils/btn.h>//hinzugefügt für Power Button Read
+
+
 static bool _jc_virt_mouse_read(lv_indev_data_t* data)
 {
 	// Poll Joy-Con.
@@ -450,13 +458,13 @@ static bool _jc_virt_mouse_read(lv_indev_data_t* data)
 	if (!jc_pad->conn_l)
 		jc_drv_ctx.centering_done = 0;
 
-	// Set button presses.
+	// Set button presses. //Buttons Joycon Funktion anwählen
 	if (jc_pad->a || jc_pad->zl || jc_pad->zr)
 		data->state = LV_INDEV_STATE_PR;
 	else
 		data->state = LV_INDEV_STATE_REL;
 
-	// Enable console.
+	// Enable console. //Buttons Joycon Debug Konsole aktivieren
 	if (jc_pad->plus || jc_pad->minus)
 	{
 		if (((u32)get_tmr_ms() - jc_drv_ctx.console_timeout) > 1000)
@@ -560,11 +568,82 @@ static bool _jc_virt_mouse_read(lv_indev_data_t* data)
 			data->state = LV_INDEV_STATE_REL; // Ensure that no clicks are allowed.
 	}
 
-	if (jc_pad->b && close_btn)
+
+	//Button Joycon Funktion schliessen geändert zu x
+	if (jc_pad->x && close_btn)
 	{
 		lv_action_t close_btn_action = lv_btn_get_action(close_btn, LV_BTN_ACTION_CLICK);
 		close_btn_action(close_btn);
+
 		close_btn = NULL;
+
+	}
+
+	//Button Joycon Funktion schliessen geändert zu x --------- Fix für Win nach Win schliessen in FM Hauptfenster eingebaut mit eigener custom close action
+	if (jc_pad->x && close_firstwin)
+	{
+		lv_action_t close_btn_action = lv_btn_get_action(close_firstwin, LV_BTN_ACTION_CLICK);
+		close_btn_action(close_firstwin);
+
+		close_firstwin = NULL;
+
+	}
+
+	//Button Joycon Funktion Folder Back b
+	if (jc_pad->b && btn_back)
+	{
+		lv_action_t back_btn_action = lv_btn_get_action(btn_back, LV_BTN_ACTION_CLICK);//reagiert extrem schnell geht manchmal mehrere Ordner zurück
+		back_btn_action(btn_back);
+
+		msleep(670);//Verzögerung OK für Folder eingang/ausgang, angepasst standart Verzögerung unten
+	}
+
+	//Button Joycon Funktion Enter Folder a, freeze wenn im Hauptmenü -- mit (&& list) ok und list nullen beim beenden
+	if (jc_pad->a && list)
+	{
+		//Prüfen ob Joycon Mouse verborgen, wenn ja angewälter Listbutton Enter Folder ausführen, sonst gilt die Joycon Mouse Cursor Position als Ziel
+		if (jc_drv_ctx.cursor_hidden)
+		{
+			//Prüfen ob kein Element in der Liste, dann nichts machen, sonst bei leerem Ordner und drücken freeze weil kein Button vorhanden
+			if (lv_list_get_btn_selected(list) != NULL)
+			{
+				lv_action_t enter_action = lv_btn_get_action(lv_list_get_btn_selected(list), LV_BTN_ACTION_CLICK);//reagiert extrem schnell geht manchmal mehrere Ordner hinein
+				enter_action(lv_list_get_btn_selected(list));
+
+				msleep(670);//Verzögerung OK für Folder eingang/ausgang, angepasst standart Verzögerung unten
+			}
+		}
+	}
+
+	//Button Joycon Funktion UP freeze wenn im Hauptmenü mit (&& list) ok
+	if (jc_pad->up && list)
+	{
+		lv_list_set_btn_selected(list, lv_list_get_prev_btn(list, lv_list_get_btn_selected(list)));//Funktioniert Fokusierter List Button schieben, rutscht bei list ende wieder nach oben
+	}
+
+	//Button Joycon Funktion DOWN freeze wenn im Hauptmenü mit (&& list) ok
+	if (jc_pad->down && list)
+	{
+		lv_list_set_btn_selected(list, lv_list_get_next_btn(list, lv_list_get_btn_selected(list)));//Funktioniert Fokusierter List Button schieben, rutscht bei list ende wieder nach oben
+	}
+
+	//Prüfen ob Joycon Mouse verborgen, wenn ja Verzögerung Tasten ausführen für List Navigation, sonst nichts verzögern, Muss nach den Tasten sein die betroffen sein sollen!!!!
+	if (jc_drv_ctx.cursor_hidden && list)
+	{
+		//Greift aber auch für alle anderen Tasten!
+		if (!jc_pad->y && list)//Wenn Taste nicht gedrückt und List vorhanden Verzögerung
+		{
+			msleep(130);//Verzögerung Tastendruck Repeat
+			return false;
+		}
+	}
+
+	//Power Button Reload Menü
+	u8 btn = btn_read();
+
+	if (btn & BTN_POWER)
+	{
+		reload_nyx();
 	}
 
 	return false; // No buffering so no more data read.
@@ -959,7 +1038,13 @@ static lv_res_t _create_mbox_reload(lv_obj_t* btn)
 	lv_mbox_set_text(mbox, "#FF8000 Do you want to#\n#FF8000 reload the application?#");
 	lv_mbox_add_btns(mbox, mbox_btn_map, reload_action);
 
-	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &mbox_bg);
+	//Buttonmap Style MBOX
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_BG, &lv_style_transp);//MBOX Buttons style Hintergrund
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_REL, &btn_transp_rel);//MBOX Buttons style Release
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BTN_PR, &btn_transp_pr);//MBOX Buttons style Pressed
+
+	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &mbox_bg);//MBOX Hintergrund Style ausführen
+
 
 	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_top(mbox, true);
@@ -1151,6 +1236,15 @@ lv_obj_t* gui_create_standard_window(const char* win_title)
 	return win;
 }
 
+//Eigene close action für erstes Fenster
+lv_res_t lv_win_close_action_firstwin(lv_obj_t* btn)
+{
+
+	close_firstwin = NULL;//close_btn = NULL;
+
+	return lv_win_close_action(btn);
+}
+
 //Funktion RCM Reboot
 static lv_res_t reboot_to_rcm(lv_obj_t* btn)
 {
@@ -1195,7 +1289,7 @@ static lv_res_t ctrl_info(lv_obj_t* btn)
 	lv_obj_set_top(mbox, true);
 	lv_obj_set_auto_realign(mbox, true);
 	lv_obj_align(mbox, NULL, LV_ALIGN_IN_TOP_RIGHT, 5, 5);
-	lv_mbox_set_text(mbox, "ArgonNX-SE Version 1.1 by Storm 2021\ncreated with Visual Studio and LittlevGL\npartially based on ArgonNX und Hekate\nIcon templates from mrdude\nThanks to the programmers!");
+	lv_mbox_set_text(mbox, "ArgonNX-SE Version 1.3 by Storm 2021\ncreated with Visual Studio and LittlevGL\npartially based on ArgonNX und Hekate\nIcon templates from mrdude\nThanks to the programmers!\nHekate bdk und Libs Version 5.5.7");
 	lv_mbox_set_style(mbox, LV_MBOX_STYLE_BG, &bg);
 	lv_mbox_start_auto_close(mbox, 12000);
 
@@ -1305,7 +1399,7 @@ static lv_res_t ctrl_themedelATM(lv_obj_t* btn)
 }
 
 //Update Sx boot.dat Button Funktion
-static lv_res_t ctrl_updsx(lv_obj_t* btn)
+/*static lv_res_t ctrl_updsx(lv_obj_t* btn)
 {
 	sd_mount();
 
@@ -1368,7 +1462,7 @@ static lv_res_t ctrl_updsx(lv_obj_t* btn)
 
 	sd_unmount(false);
 	return LV_RES_OK;
-}
+}*/
 
 //Definition statische Tastatur
 static lv_obj_t* kb;
@@ -1492,7 +1586,7 @@ static lv_res_t ctrl_rtctime(lv_obj_t* btn)
 	lv_win_set_style(win, LV_WIN_STYLE_BG, &win_bg_style);
 
 	//Add control button to the header auch OK
-	close_btn = lv_win_add_btn(win, NULL, SYMBOL_CLOSE, lv_win_close_action);
+	close_btn = lv_win_add_btn(win, NULL, SYMBOL_CLOSE, lv_win_close_action_custom);
 	lv_obj_set_style(close_btn, LV_LABEL_STYLE_MAIN);
 
 	lv_obj_t* save_btn = lv_win_add_btn(win, NULL, SYMBOL_SAVE, ctrl_rtctimesave);
@@ -1690,6 +1784,14 @@ static lv_res_t ctrl_rtctime(lv_obj_t* btn)
 	return LV_RES_OK;
 }
 
+
+//File Manager Start
+
+//Sorry closed Source for now
+
+//Ende Filemanager
+
+
 //Tasks refresh definitionen
 static void update_status(void* params)
 {
@@ -1807,7 +1909,7 @@ static void update_status(void* params)
 	}
 
 	if (per1 <= 5) {
-		lv_label_set_array_text(status_bar.akkusym, SYMBOL_BATTERY_EMPTY" Warnung, Akku fast leer! Bitte Ladegerät anschliessen!", 64);
+		lv_label_set_array_text(status_bar.akkusym, SYMBOL_BATTERY_EMPTY"\nWarnung, Akku fast leer! Bitte Ladegerät anschliessen!", 64);
 	}
 
 	//Info Text Akku Prozent anzeigen
@@ -1910,7 +2012,7 @@ static void create_title(lv_theme_t* th)
 	//Title Erstellen
 	lv_obj_t* title = lv_label_create(lv_scr_act(), NULL);
 	lv_obj_align(title, lv_scr_act(), LV_ALIGN_IN_TOP_LEFT, 65, 620);//15
-	lv_label_set_text(title, "ArgonNX-SE v1.1");
+	lv_label_set_text(title, "ArgonNX-SE v1.3");
 	lv_obj_set_auto_realign(title, true);
 
 	static lv_style_t label_style;
@@ -2012,6 +2114,9 @@ static lv_res_t ctrl_helligkeit(lv_obj_t* slider)
 //Tabview Buttons
 static lv_obj_t* btn = NULL;
 
+static lv_obj_t* scr;//Tab view definition hekate load_main_menu unter // Create screen container.
+static lv_obj_t* tv;//Tab view definition hekate load_main_menu unter // Add tabview page to screen. Benötigt für AMS Version und Payload Tab
+
 //Tools Tab erstellen
 void create_tools_tab(lv_theme_t* th, lv_obj_t* parent)
 {
@@ -2081,17 +2186,17 @@ void create_tools_tab(lv_theme_t* th, lv_obj_t* parent)
 
 	// Try to get logo Button
 	btn = lv_imgbtn_create(btn_sys, NULL);
-	img = bmp_to_lvimg_obj("argon/sys/logos-gui/update.bmp");
+	img = bmp_to_lvimg_obj("argon/sys/logos-gui/fileman.bmp");
 
 	// Add button mask/radius and align icon.
 	lv_obj_set_size(btn, 100, 100);
 	lv_imgbtn_set_style(btn, LV_BTN_STATE_PR, &style_pr);
 	lv_imgbtn_set_src(btn, LV_BTN_STATE_REL, img);
 	lv_imgbtn_set_src(btn, LV_BTN_STATE_PR, img);
-	lv_btn_set_action(btn, LV_BTN_ACTION_CLICK, ctrl_updsx);
+	//lv_btn_set_action(btn, LV_BTN_ACTION_CLICK, ctrl_filemanager);//File Manager start
 
 	label = lv_label_create(parent, NULL);
-	lv_label_set_text(label, "Update SXOS");
+	lv_label_set_text(label, "Filemanager");
 	lv_obj_set_pos(label, 540, 410);
 	lv_label_set_style(label, &font20_style);
 
@@ -2342,9 +2447,6 @@ void create_tools_tab(lv_theme_t* th, lv_obj_t* parent)
 
 }
 
-static lv_obj_t* scr;//Tab view definitiion
-static lv_obj_t* tv;//Tab view definitiion
-
 //Funktionen Payload Tab erstellen
 void payload_full_path(const char* payload, char* result)
 {
@@ -2593,7 +2695,7 @@ static void load_main_menu(lv_theme_t* th)
 	render_payloads_tab(th, tv);
 	lv_obj_t* tab_tools = lv_tabview_add_tab(tv, SYMBOL_TOOLS" Tools");
 	create_tools_tab(th, tab_tools);//Tools Tab
-	
+
 	// Create status bar und Title
 	create_title(th);
 
@@ -2606,30 +2708,6 @@ static void load_main_menu(lv_theme_t* th)
 	lv_task_ready(system_tasks.task.status_bar);
 
 	lv_task_create(_check_sd_card_removed, 2000, LV_TASK_PRIO_LOWEST, NULL);
-}
-
-static void _nyx_gui_loop_powersave_ram()
-{
-	// Saves 280 mW.
-	while (true)
-	{
-		minerva_change_freq(FREQ_1600);  // Takes 295 us.
-
-		lv_task_handler();
-
-		minerva_change_freq(FREQ_800);   // Takes 80 us.
-	}
-}
-
-static void _nyx_gui_loop_powersave_cpu()
-{
-	// Saves 75 mW.
-	while (true)
-	{
-		lv_task_handler();
-
-		bpmp_usleep(HALT_COP_MAX_CNT);   // Takes 200 us.
-	}
 }
 
 //Gui initialisieren
@@ -2669,12 +2747,13 @@ void gui_load_and_run()
 	// Initialize temperature sensor.
 	tmp451_init();
 
-	//Set theme
-	lv_theme_t* th = lv_theme_storm_init(0, NULL);
+	// Set theme
+	lv_theme_t* th = lv_theme_storm_init(0, NULL);//Theme initialisieren
+
 	lv_theme_set_current(th);
 
-	//Create main menu
-	load_main_menu(th);
+	// Create main menu
+	load_main_menu(th);//Mein Menü
 
 	//Joycon Cursor
 	jc_drv_ctx.cursor = lv_img_create(lv_scr_act(), NULL);
@@ -2689,16 +2768,25 @@ void gui_load_and_run()
 		lv_task_once(task_run_sd_errors);
 	}
 
-	// Gui loop.
+	// Gui loop.//hek556
 	if (h_cfg.t210b01)
 	{
 		// Minerva not supported on T210B01 yet. No power saving.
 		while (true)
 			lv_task_handler();
 	}
-	else if (n_cfg.new_powersave)
-		_nyx_gui_loop_powersave_ram(); // Alternate DRAM frequencies. Higher power savings.
 	else
-		_nyx_gui_loop_powersave_cpu(); // Suspend CPU. Lower power savings.
+	{
+		// Alternate DRAM frequencies. Saves 280 mW.
+		while (true)
+		{
+			minerva_change_freq(FREQ_1600);  // Takes 295 us.
+
+			lv_task_handler();
+
+			minerva_change_freq(FREQ_800);   // Takes 80 us.
+		}
+	}
+
 }
 
