@@ -214,4 +214,5 @@ This payload will chainload any CFW or payload.
 * __LittlevGL__ for being such a good embedded graphics library.
 * __D3fau4__ for touch support testing.
 * __Guillem96__ for argonNX Orginal.
+* __mrdude__ for icons template.
 * __Muxi1__ for Mariko testing.
