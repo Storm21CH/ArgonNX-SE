@@ -96,6 +96,32 @@ Tastenbelegung Bedienung Filemanager:
 - Some Buttons Theme fix
 - Fixed a Error after autoclosing a window with X Button (Close Filemanager and other Windows)
 
+
+## NEW Features in ArgonNX-SE v1.4 by Storm
+
+- Update to hekate bdk 5.7.2
+- AULA OLED Switch support
+- Hardware Info Page revised
+- Fix slider brightness value for AULA
+- Added language selection
+- Updated to 1.4
+- General bug fixes and stability fixes
+
+Thanks @dezem und https://gbatemp.net/members/twocool4life86.591345/ for the AULA OLED tests, without them this version would not have been possible!
+
+## Neue Funktionen in ArgonNX-SE v1.4 by Storm
+
+- Update auf hekate bdk 5.7.2
+- AULA OLED Switch support
+- Hardware Info Page überarbeitet
+- Fix Slider Helligkeits Value auslesen für AULA
+- Sprachauswahl hinzugefügt
+- Update zu 1.4
+- Allgemeine Fehlerbehebung und Stabilitäts Fixes
+
+Danke an @dezem und https://gbatemp.net/members/twocool4life86.591345/ für die AULA OLED  Tests, ohne sie wäre diese Version nicht möglich gewesen!
+
+
 ## About BMP format
 
 The only format supported is **BMP 32 bit ARGB color**.
