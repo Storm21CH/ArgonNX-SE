@@ -194,6 +194,7 @@ $ python argon.py --help
 
 These images were captured with the **screenshot** feature.
 
+![](Screenshots/1.png)
 <img src="Screenshots/1.png" alt="example" width="700">
 
 ![](Screenshots/scr20220407_135503.jpg)
