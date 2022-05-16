@@ -122,6 +122,29 @@ Thanks @dezem und https://gbatemp.net/members/twocool4life86.591345/ for the AUL
 Danke an @dezem und https://gbatemp.net/members/twocool4life86.591345/ für die AULA OLED  Tests, ohne sie wäre diese Version nicht möglich gewesen!
 
 
+## NEW Features in ArgonNX-SE v1.5 by Storm
+
+- Menu colors can now be set arbitrarily:
+- Textcolor
+- Tab Textcolor
+- Standard Payload Icon color
+
+- New icons for Emunandswitcher and ArgonNX-SE itself
+- Updated to 1.5
+- General bug fixes and stability fixes
+
+## Neue Funktionen in ArgonNX-SE v1.5 by Storm
+
+- Menü Farben können nun beliebig eingestellt werden:
+- Textfarbe
+- Tab Textfarbe
+- Standart Payload Icon Farbe
+
+- Neue Icons für Emunandswitcher und ArgonNX-SE selber
+- Update zu 1.5
+- Allgemeine Fehlerbehebung und Stabilitäts Fixes
+
+
 ## About BMP format
 
 The only format supported is **BMP 32 bit ARGB color**.
@@ -173,7 +196,11 @@ These images were captured with the **screenshot** feature.
 
 <img src="Screenshots/1.png" alt="example" width="700">
 
-![](Screenshots/2.jpg)
+![](Screenshots/scr20220407_135503.jpg)
+
+![](Screenshots/scr20220407_135512.jpg)
+
+![](Screenshots/scr20220407_135427.jpg)
 
 <img src="Screenshots/3.png" alt="example" width="700">
 
