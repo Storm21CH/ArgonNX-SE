@@ -145,6 +145,32 @@ Danke an @dezem und https://gbatemp.net/members/twocool4life86.591345/ für die 
 - Allgemeine Fehlerbehebung und Stabilitäts Fixes
 
 
+## NEW Features in ArgonNX-SE v1.6 by Storm
+
+- File manager, copy file and folder added percentage display, autoclose info window after copying
+- Updated to 1.6
+- General bug fixes and stability fixes
+
+## Neue Funktionen in ArgonNX-SE v1.6 by Storm
+
+- Dateimanager, Datei und Ordner kopieren Prozentanzeige hinzugefügt, autoschliessen des Infofensters nach dem kopieren
+- Update zu 1.6
+- Allgemeine Fehlerbehebung und Stabilitäts Fixes
+
+
+## NEW Features in ArgonNX-SE v1.7 by Storm
+
+- New function to select the autolaunch payload under tools. The desired payload is automatically copied and renamed. And the ability to delete the autolaunch payload.
+- Updated to 1.7
+- General bug fixes and stability fixes
+
+## Neue Funktionen in ArgonNX-SE v1.7 by Storm
+
+- Neue Funktion um den Autolaunch Payload unter Tools auszuwählen. Der gewünschte Payload wird automatisch kopiert und umbenannt. Und die Möglichkeit den Autolaunch Payload zu löschen.
+- Update zu 1.7
+- Allgemeine Fehlerbehebung und Stabilitäts Fixes
+
+
 ## About BMP format
 
 The only format supported is **BMP 32 bit ARGB color**.
@@ -195,6 +221,8 @@ $ python argon.py --help
 These images were captured with the **screenshot** feature.
 
 ![](Screenshots/1.png)
+
+![](Screenshots/scr20220425_151634.jpg)
 
 ![](Screenshots/scr20220407_135503.jpg)
 
