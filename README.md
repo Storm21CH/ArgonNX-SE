@@ -268,6 +268,8 @@ argon
 |       hw.ini
 |       lp0.bso
 |       logos-gui
+|       lang.ini
+|       color.ini
 |
 └─── background.bmp
      splash.bmp
