@@ -171,6 +171,19 @@ Danke an @dezem und https://gbatemp.net/members/twocool4life86.591345/ für die 
 - Allgemeine Fehlerbehebung und Stabilitäts Fixes
 
 
+## NEW Features in ArgonNX-SE v1.8 by Storm
+
+- New feature: Ability to load a custom splash for each payload
+- The image must have a resolution of 1280x720px and format ARGB32, like background.bmp
+- The image must have the same name as the payload and be located in the "argon/payloads" folder, e.g. at fusee.bin = fusee.bmp
+
+## Neue Funktionen in ArgonNX-SE v1.8 by Storm
+
+- Neue Funktion: Möglichkeit für jeden Payload einen benutzerdefinierten Splash zu laden
+- Das Bild muss eine Auflösung von 1280x720px und format ARGB32 besitzen, wie background.bmp
+- Das Bild muss den gleichen Namen wie der Payload haben und sich im Ordner "argon/payloads" befinden, z.B. bei fusee.bin = fusee.bmp
+
+
 ## About BMP format
 
 The only format supported is **BMP 32 bit ARGB color**.
