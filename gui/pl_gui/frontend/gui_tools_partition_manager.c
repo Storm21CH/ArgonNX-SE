@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2021 CTCaer
+ * Copyright (c) 2019-2022 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -16,24 +16,13 @@
 
 #include <stdlib.h>
 
+#include <bdk.h>
+
 #include "gui.h"
 #include "gui_tools.h"
 #include "gui_tools_partition_manager.h"
 #include <libs/fatfs/diskio.h>
 #include <libs/lvgl/lvgl.h>
-#include <mem/heap.h>
-#include <sec/se.h>
-#include <soc/hw_init.h>
-#include <soc/pmc.h>
-#include <soc/t210.h>
-#include <storage/mbr_gpt.h>
-#include "../storage/nx_emmc.h"
-#include <storage/nx_sd.h>
-#include <storage/ramdisk.h>
-#include <storage/sdmmc.h>
-#include <utils/btn.h>
-#include <utils/sprintf.h>
-#include <utils/util.h>
 
 extern volatile boot_cfg_t *b_cfg;
 extern volatile nyx_storage_t *nyx_str;
@@ -50,6 +39,7 @@ typedef struct _partition_ctxt_t
 	u32 and_size;
 
 	bool emu_double;
+	bool emmc_is_64gb;
 
 	mbr_t mbr_old;
 
@@ -71,8 +61,6 @@ typedef struct _partition_ctxt_t
 	lv_obj_t *lbl_emu;
 	lv_obj_t *lbl_l4t;
 	lv_obj_t *lbl_and;
-
-	lv_obj_t *btn_partition;
 } partition_ctxt_t;
 
 typedef struct _l4t_flasher_ctxt_t
@@ -139,7 +127,7 @@ static int _backup_and_restore_files(char *path, u32 *total_files, u32 *total_si
 			if ((file_size + *total_size) < *total_size)
 			{
 				// Set size to > 1GB, skip next folders and return.
-				*total_size = 0x80000000;
+				*total_size = SZ_2G;
 				res = -1;
 				break;
 			}
@@ -163,7 +151,7 @@ static int _backup_and_restore_files(char *path, u32 *total_files, u32 *total_si
 
 				while (file_size)
 				{
-					u32 chunk_size = MIN(file_size, 0x400000); // 4MB chunks.
+					u32 chunk_size = MIN(file_size, SZ_4M); // 4MB chunks.
 					file_size -= chunk_size;
 
 					// Copy file to buffer.
@@ -184,7 +172,7 @@ static int _backup_and_restore_files(char *path, u32 *total_files, u32 *total_si
 			}
 
 			// If total is > 1GB exit.
-			if (*total_size > (RAM_DISK_SZ - 0x1000000)) // 0x2400000.
+			if (*total_size > (RAM_DISK_SZ - SZ_16M)) // 0x2400000.
 			{
 				// Skip next folders and return.
 				res = -1;
@@ -201,6 +189,7 @@ static int _backup_and_restore_files(char *path, u32 *total_files, u32 *total_si
 			{
 				f_chdrive(dst);
 				f_mkdir(path);
+				f_chmod(path, fno.fattrib, 0xFF);
 			}
 			// Enter the directory.
 			res = _backup_and_restore_files(path, total_files, total_size, dst, src, labels);
@@ -234,7 +223,7 @@ static void _prepare_and_flash_mbr_gpt()
 		memcpy(&mbr.bootstrap[0x80], &part_info.mbr_old.bootstrap[0x80], 304);
 
 	// Clear the first 16MB.
-	memset((void *)SDMMC_UPPER_BUFFER, 0, 0x8000);
+	memset((void *)SDMMC_UPPER_BUFFER, 0, SZ_16M);
 	sdmmc_storage_write(&sd_storage, 0, 0x8000, (void *)SDMMC_UPPER_BUFFER);
 
 	u8 mbr_idx = 1;
@@ -488,17 +477,13 @@ static lv_res_t _action_part_manager_ums_sd(lv_obj_t *btn)
 {
 	action_ums_sd(btn);
 
-	if (lv_btn_get_state(part_info.btn_partition) != LV_BTN_STATE_INA)
-	{
-		lv_action_t close_btn_action = lv_btn_get_action(close_btn, LV_BTN_ACTION_CLICK);
-		close_btn_action(close_btn);
-		lv_obj_del(ums_mbox);
-		create_window_partition_manager(NULL);
+	// Close and reopen partition manager.
+	lv_action_t close_btn_action = lv_btn_get_action(close_btn, LV_BTN_ACTION_CLICK);
+	close_btn_action(close_btn);
+	lv_obj_del(ums_mbox);
+	create_window_partition_manager(NULL);
 
-		return LV_RES_INV;
-	}
-
-	return LV_RES_OK;
+	return LV_RES_INV;
 }
 
 static lv_res_t _action_delete_linux_installer_files(lv_obj_t * btns, const char * txt)
@@ -555,183 +540,183 @@ static lv_res_t _action_flash_linux_data(lv_obj_t * btns, const char * txt)
 
 	bool succeeded = false;
 
+	if (btn_idx)
+		return LV_RES_INV;
+
 	// Flash Linux.
-	if (!btn_idx)
+	lv_obj_t *dark_bg = lv_obj_create(lv_scr_act(), NULL);
+	lv_obj_set_style(dark_bg, &mbox_darken);
+	lv_obj_set_size(dark_bg, LV_HOR_RES, LV_VER_RES);
+
+	static const char *mbox_btn_map[] = { "\211", "\222OK", "\211", "" };
+	static const char *mbox_btn_map2[] = { "\223Delete Installation Files", "\221OK", "" };
+	lv_obj_t *mbox = lv_mbox_create(dark_bg, NULL);
+	lv_mbox_set_recolor_text(mbox, true);
+	lv_obj_set_width(mbox, LV_HOR_RES / 10 * 5);
+
+	lv_mbox_set_text(mbox, "#FF8000 Linux Flasher#");
+
+	lv_obj_t *lbl_status = lv_label_create(mbox, NULL);
+	lv_label_set_recolor(lbl_status, true);
+	lv_label_set_text(lbl_status, "#C7EA46 Status:# Flashing Linux...");
+
+	// Create container to keep content inside.
+	lv_obj_t *h1 = lv_cont_create(mbox, NULL);
+	lv_cont_set_fit(h1, true, true);
+	lv_cont_set_style(h1, &lv_style_transp_tight);
+
+	lv_obj_t *bar = lv_bar_create(h1, NULL);
+	lv_obj_set_size(bar, LV_DPI * 30 / 10, LV_DPI / 5);
+	lv_bar_set_range(bar, 0, 100);
+	lv_bar_set_value(bar, 0);
+
+	lv_obj_t *label_pct = lv_label_create(h1, NULL);
+	lv_label_set_recolor(label_pct, true);
+	lv_label_set_text(label_pct, " "SYMBOL_DOT" 0%");
+	lv_label_set_style(label_pct, lv_theme_get_current()->label.prim);
+	lv_obj_align(label_pct, bar, LV_ALIGN_OUT_RIGHT_MID, LV_DPI / 20, 0);
+
+	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+	lv_obj_set_top(mbox, true);
+
+	sd_mount();
+
+	int res = 0;
+	char *path = malloc(1024);
+	char *txt_buf = malloc(SZ_4K);
+	strcpy(path, "switchroot/install/l4t.00");
+	u32 path_len = strlen(path) - 2;
+
+	FIL fp;
+
+	res = f_open(&fp, path, FA_READ);
+	if (res)
 	{
-		lv_obj_t *dark_bg = lv_obj_create(lv_scr_act(), NULL);
-		lv_obj_set_style(dark_bg, &mbox_darken);
-		lv_obj_set_size(dark_bg, LV_HOR_RES, LV_VER_RES);
+		lv_label_set_text(lbl_status, "#FFDD00 Error:# Failed to open 1st part!");
 
-		static const char *mbox_btn_map[] = { "\211", "\222OK", "\211", "" };
-		static const char *mbox_btn_map2[] = { "\223Delete Installation Files", "\221OK", "" };
-		lv_obj_t *mbox = lv_mbox_create(dark_bg, NULL);
-		lv_mbox_set_recolor_text(mbox, true);
-		lv_obj_set_width(mbox, LV_HOR_RES / 10 * 5);
+		goto exit;
+	}
 
-		lv_mbox_set_text(mbox, "#FF8000 Linux Flasher#");
+	u64 fileSize = (u64)f_size(&fp);
 
-		lv_obj_t *lbl_status = lv_label_create(mbox, NULL);
-		lv_label_set_recolor(lbl_status, true);
-		lv_label_set_text(lbl_status, "#C7EA46 Status:# Flashing Linux...");
+	u32 num = 0;
+	u32 pct = 0;
+	u32 lba_curr = 0;
+	u32 bytesWritten = 0;
+	u32 currPartIdx = 0;
+	u32 prevPct = 200;
+	int retryCount = 0;
+	u32 total_size_sct = l4t_flash_ctxt.image_size_sct;
 
-		// Create container to keep content inside.
-		lv_obj_t *h1 = lv_cont_create(mbox, NULL);
-		lv_cont_set_fit(h1, true, true);
-		lv_cont_set_style(h1, &lv_style_transp_tight);
+	u8 *buf = (u8 *)MIXD_BUF_ALIGNED;
+	DWORD *clmt = f_expand_cltbl(&fp, SZ_4M, 0);
 
-		lv_obj_t *bar = lv_bar_create(h1, NULL);
-		lv_obj_set_size(bar, LV_DPI * 30 / 10, LV_DPI / 5);
-		lv_bar_set_range(bar, 0, 100);
-		lv_bar_set_value(bar, 0);
-
-		lv_obj_t *label_pct = lv_label_create(h1, NULL);
-		lv_label_set_recolor(label_pct, true);
-		lv_label_set_text(label_pct, " "SYMBOL_DOT" 0%");
-		lv_label_set_style(label_pct, lv_theme_get_current()->label.prim);
-		lv_obj_align(label_pct, bar, LV_ALIGN_OUT_RIGHT_MID, LV_DPI / 20, 0);
-
-		lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
-		lv_obj_set_top(mbox, true);
-
-		sd_mount();
-
-		int res = 0;
-		char *path = malloc(1024);
-		char *txt_buf = malloc(0x1000);
-		strcpy(path, "switchroot/install/l4t.00");
-		u32 path_len = strlen(path) - 2;
-
-		FIL fp;
-
-		res = f_open(&fp, path, FA_READ);
-		if (res)
+	while (total_size_sct > 0)
+	{
+		// If we have more than one part, check the size for the split parts and make sure that the bytes written is not more than that.
+		if (bytesWritten >= fileSize)
 		{
-			lv_label_set_text(lbl_status, "#FFDD00 Error:# Failed to open 1st part!");
+			// If we have more bytes written then close the file pointer and increase the part index we are using
+			f_close(&fp);
+			free(clmt);
+			memset(&fp, 0, sizeof(fp));
+			currPartIdx++;
 
-			goto exit;
-		}
-
-		u64 fileSize = (u64)f_size(&fp);
-
-		u32 num = 0;
-		u32 pct = 0;
-		u32 lba_curr = 0;
-		u32 bytesWritten = 0;
-		u32 currPartIdx = 0;
-		u32 prevPct = 200;
-		int retryCount = 0;
-		u32 total_size_sct = l4t_flash_ctxt.image_size_sct;
-
-		u8 *buf = (u8 *)MIXD_BUF_ALIGNED;
-		DWORD *clmt = f_expand_cltbl(&fp, 0x400000, 0);
-
-		while (total_size_sct > 0)
-		{
-			// If we have more than one part, check the size for the split parts and make sure that the bytes written is not more than that.
-			if (bytesWritten >= fileSize)
+			if (currPartIdx < 10)
 			{
-				// If we have more bytes written then close the file pointer and increase the part index we are using
-				f_close(&fp);
-				free(clmt);
-				memset(&fp, 0, sizeof(fp));
-				currPartIdx++;
-
-				if (currPartIdx < 10)
-				{
-					path[path_len] = '0';
-					itoa(currPartIdx, &path[path_len + 1], 10);
-				}
-				else
-					itoa(currPartIdx, &path[path_len], 10);
-
-				// Try to open the next file part
-				res = f_open(&fp, path, FA_READ);
-				if (res)
-				{
-					s_printf(txt_buf, "#FFDD00 Error:# Failed to open part %d#", currPartIdx);
-					lv_label_set_text(lbl_status, txt_buf);
-					manual_system_maintenance(true);
-
-					goto exit;
-				}
-				fileSize = (u64)f_size(&fp);
-				bytesWritten = 0;
-				clmt = f_expand_cltbl(&fp, 0x400000, 0);
+				path[path_len] = '0';
+				itoa(currPartIdx, &path[path_len + 1], 10);
 			}
+			else
+				itoa(currPartIdx, &path[path_len], 10);
 
-			retryCount = 0;
-			num = MIN(total_size_sct, 8192);
-
-			res = f_read_fast(&fp, buf, num << 9);
-			manual_system_maintenance(false);
-
+			// Try to open the next file part
+			res = f_open(&fp, path, FA_READ);
 			if (res)
 			{
-				lv_label_set_text(lbl_status, "#FFDD00 Error:# Reading from SD!");
+				s_printf(txt_buf, "#FFDD00 Error:# Failed to open part %d#", currPartIdx);
+				lv_label_set_text(lbl_status, txt_buf);
+				manual_system_maintenance(true);
+
+				goto exit;
+			}
+			fileSize = (u64)f_size(&fp);
+			bytesWritten = 0;
+			clmt = f_expand_cltbl(&fp, SZ_4M, 0);
+		}
+
+		retryCount = 0;
+		num = MIN(total_size_sct, 8192);
+
+		res = f_read_fast(&fp, buf, num << 9);
+		manual_system_maintenance(false);
+
+		if (res)
+		{
+			lv_label_set_text(lbl_status, "#FFDD00 Error:# Reading from SD!");
+			manual_system_maintenance(true);
+
+			f_close(&fp);
+			free(clmt);
+			goto exit;
+		}
+		res = !sdmmc_storage_write(&sd_storage, lba_curr + l4t_flash_ctxt.offset_sct, num, buf);
+
+		manual_system_maintenance(false);
+
+		while (res)
+		{
+			msleep(150);
+			manual_system_maintenance(true);
+
+			if (retryCount >= 3)
+			{
+				lv_label_set_text(lbl_status, "#FFDD00 Error:# Writing to SD!");
 				manual_system_maintenance(true);
 
 				f_close(&fp);
 				free(clmt);
 				goto exit;
 			}
+
 			res = !sdmmc_storage_write(&sd_storage, lba_curr + l4t_flash_ctxt.offset_sct, num, buf);
-
 			manual_system_maintenance(false);
-
-			while (res)
-			{
-				msleep(150);
-				manual_system_maintenance(true);
-
-				if (retryCount >= 3)
-				{
-					lv_label_set_text(lbl_status, "#FFDD00 Error:# Writing to SD!");
-					manual_system_maintenance(true);
-
-					f_close(&fp);
-					free(clmt);
-					goto exit;
-				}
-
-				res = !sdmmc_storage_write(&sd_storage, lba_curr + l4t_flash_ctxt.offset_sct, num, buf);
-				manual_system_maintenance(false);
-			}
-			pct = (u64)((u64)lba_curr * 100u) / (u64)l4t_flash_ctxt.image_size_sct;
-			if (pct != prevPct)
-			{
-				lv_bar_set_value(bar, pct);
-				s_printf(txt_buf, " #DDDDDD "SYMBOL_DOT"# %d%%", pct);
-				lv_label_set_text(label_pct, txt_buf);
-				manual_system_maintenance(true);
-				prevPct = pct;
-			}
-
-			lba_curr += num;
-			total_size_sct -= num;
-			bytesWritten += num * NX_EMMC_BLOCKSIZE;
 		}
-		lv_bar_set_value(bar, 100);
-		lv_label_set_text(label_pct, " "SYMBOL_DOT" 100%");
-		manual_system_maintenance(true);
+		pct = (u64)((u64)lba_curr * 100u) / (u64)l4t_flash_ctxt.image_size_sct;
+		if (pct != prevPct)
+		{
+			lv_bar_set_value(bar, pct);
+			s_printf(txt_buf, " #DDDDDD "SYMBOL_DOT"# %d%%", pct);
+			lv_label_set_text(label_pct, txt_buf);
+			manual_system_maintenance(true);
+			prevPct = pct;
+		}
 
-		// Restore operation ended successfully.
-		f_close(&fp);
-		free(clmt);
+		lba_curr += num;
+		total_size_sct -= num;
+		bytesWritten += num * EMMC_BLOCKSIZE;
+	}
+	lv_bar_set_value(bar, 100);
+	lv_label_set_text(label_pct, " "SYMBOL_DOT" 100%");
+	manual_system_maintenance(true);
 
-		succeeded = true;
+	// Restore operation ended successfully.
+	f_close(&fp);
+	free(clmt);
+
+	succeeded = true;
 
 exit:
-		free(path);
-		free(txt_buf);
+	free(path);
+	free(txt_buf);
 
-		if (!succeeded)
-			lv_mbox_add_btns(mbox, mbox_btn_map, mbox_action);
-		else
-			lv_mbox_add_btns(mbox, mbox_btn_map2, _action_delete_linux_installer_files);
-		lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+	if (!succeeded)
+		lv_mbox_add_btns(mbox, mbox_btn_map, mbox_action);
+	else
+		lv_mbox_add_btns(mbox, mbox_btn_map2, _action_delete_linux_installer_files);
+	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
 
-		sd_unmount();
-	}
+	sd_unmount();
 
 	return LV_RES_INV;
 }
@@ -871,35 +856,33 @@ static lv_res_t _action_check_flash_linux(lv_obj_t *btn)
 			itoa(idx, &path[23], 10);
 
 		// Check for alignment.
-		if (!f_stat(path, &fno))
-		{
-			if ((u64)fno.fsize % 0x400000)
-			{
-				// Check if last part.
-				idx++;
-				if (idx < 10)
-				{
-					path[23] = '0';
-					itoa(idx, &path[23 + 1], 10);
-				}
-				else
-					itoa(idx, &path[23], 10);
-
-				// If not the last part, unaligned size is not permitted.
-				if (!f_stat(path, NULL)) // NULL: Don't override current part fs info.
-				{
-					lv_label_set_text(lbl_status, "#FFDD00 Error:# The image is not aligned to 4 MiB!");
-					goto error;
-				}
-
-				// Last part. Align size to LBA (512 bytes).
-				fno.fsize = ALIGN((u64)fno.fsize, 512);
-				idx--;
-			}
-			l4t_flash_ctxt.image_size_sct += (u64)fno.fsize >> 9;
-		}
-		else
+		if (f_stat(path, &fno))
 			break;
+
+		if ((u64)fno.fsize % SZ_4M)
+		{
+			// Check if last part.
+			idx++;
+			if (idx < 10)
+			{
+				path[23] = '0';
+				itoa(idx, &path[23 + 1], 10);
+			}
+			else
+				itoa(idx, &path[23], 10);
+
+			// If not the last part, unaligned size is not permitted.
+			if (!f_stat(path, NULL)) // NULL: Don't override current part fs info.
+			{
+				lv_label_set_text(lbl_status, "#FFDD00 Error:# The image is not aligned to 4 MiB!");
+				goto error;
+			}
+
+			// Last part. Align size to LBA (512 bytes).
+			fno.fsize = ALIGN((u64)fno.fsize, 512);
+			idx--;
+		}
+		l4t_flash_ctxt.image_size_sct += (u64)fno.fsize >> 9;
 
 		idx++;
 	}
@@ -910,7 +893,7 @@ static lv_res_t _action_check_flash_linux(lv_obj_t *btn)
 		goto error;
 	}
 
-	char *txt_buf = malloc(0x1000);
+	char *txt_buf = malloc(SZ_4K);
 	s_printf(txt_buf,
 		"#C7EA46 Status:# Found installation files and partition.\n"
 		"#00DDFF Offset:# %08x, #00DDFF Size:# %X, #00DDFF Image size:# %d MiB\n"
@@ -965,236 +948,244 @@ static lv_res_t _action_flash_android_data(lv_obj_t * btns, const char * txt)
 	// Delete parent mbox.
 	mbox_action(btns, txt);
 
+	if (btn_idx)
+		return LV_RES_INV;
+
 	// Flash Android components.
-	if (!btn_idx)
+	char path[128];
+	gpt_t *gpt = calloc(1, sizeof(gpt_t));
+	char *txt_buf = malloc(SZ_4K);
+
+	lv_obj_t *dark_bg = lv_obj_create(lv_scr_act(), NULL);
+	lv_obj_set_style(dark_bg, &mbox_darken);
+	lv_obj_set_size(dark_bg, LV_HOR_RES, LV_VER_RES);
+
+	static const char *mbox_btn_map[] = { "\211", "\222OK", "\211", "" };
+	static const char *mbox_btn_map2[] = { "\222Continue", "\222No", "" };
+	lv_obj_t *mbox = lv_mbox_create(dark_bg, NULL);
+	lv_mbox_set_recolor_text(mbox, true);
+	lv_obj_set_width(mbox, LV_HOR_RES / 9 * 6);
+
+	lv_mbox_set_text(mbox, "#FF8000 Android Flasher#");
+
+	lv_obj_t *lbl_status = lv_label_create(mbox, NULL);
+	lv_label_set_recolor(lbl_status, true);
+	lv_label_set_text(lbl_status, "#C7EA46 Status:# Searching for files and partitions...");
+
+	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+	lv_obj_set_top(mbox, true);
+
+	manual_system_maintenance(true);
+
+	sd_mount();
+
+	// Read main GPT.
+	sdmmc_storage_read(&sd_storage, 1, sizeof(gpt_t) >> 9, gpt);
+
+	bool boot_twrp = false;
+	if (memcmp(&gpt->header.signature, "EFI PART", 8) || gpt->header.num_part_ents > 128)
 	{
-		char path[128];
-		gpt_t *gpt = calloc(1, sizeof(gpt_t));
-		char *txt_buf = malloc(0x1000);
+		lv_label_set_text(lbl_status, "#FFDD00 Error:# No Android GPT was found!");
+		goto error;
+	}
 
-		lv_obj_t *dark_bg = lv_obj_create(lv_scr_act(), NULL);
-		lv_obj_set_style(dark_bg, &mbox_darken);
-		lv_obj_set_size(dark_bg, LV_HOR_RES, LV_VER_RES);
+	u32 offset_sct = 0;
+	u32 size_sct = 0;
 
-		static const char *mbox_btn_map[] = { "\211", "\222OK", "\211", "" };
-		static const char *mbox_btn_map2[] = { "\222Continue", "\222No", "" };
-		lv_obj_t *mbox = lv_mbox_create(dark_bg, NULL);
-		lv_mbox_set_recolor_text(mbox, true);
-		lv_obj_set_width(mbox, LV_HOR_RES / 9 * 6);
+	strcpy(path, "switchroot/install/boot.img");
+	if (f_stat(path, NULL))
+	{
+		s_printf(txt_buf, "#FF8000 Warning:# Kernel image not found!\n");
+		goto boot_img_not_found;
+	}
 
-		lv_mbox_set_text(mbox, "#FF8000 Android Flasher#");
-
-		lv_obj_t *lbl_status = lv_label_create(mbox, NULL);
-		lv_label_set_recolor(lbl_status, true);
-		lv_label_set_text(lbl_status, "#C7EA46 Status:# Searching for files and partitions...");
-
-		lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
-		lv_obj_set_top(mbox, true);
-
-		manual_system_maintenance(true);
-
-		sd_mount();
-
-		// Read main GPT.
-		sdmmc_storage_read(&sd_storage, 1, sizeof(gpt_t) >> 9, gpt);
-
-		bool boot_twrp = false;
-		if (memcmp(&gpt->header.signature, "EFI PART", 8) || gpt->header.num_part_ents > 128)
+	for (u32 i = 0; i < gpt->header.num_part_ents; i++)
+	{
+		if (!memcmp(gpt->entries[i].name, (char[]) { 'L', 0, 'N', 0, 'X', 0 }, 6))
 		{
-			lv_label_set_text(lbl_status, "#FFDD00 Error:# No Android GPT was found!");
-			goto error;
+			offset_sct = gpt->entries[i].lba_start;
+			size_sct = (gpt->entries[i].lba_end + 1) - gpt->entries[i].lba_start;
+			break;
 		}
 
-		strcpy(path, "switchroot/install/boot.img");
-		if (!f_stat(path, NULL))
+		if (i > 126)
+			break;
+	}
+
+	if (offset_sct && size_sct)
+	{
+		u32 file_size = 0;
+		u8 *buf = sd_file_read(path, &file_size);
+
+		if (file_size % 0x200)
 		{
-			u32 offset_sct = 0;
-			u32 size_sct = 0;
-			for (u32 i = 0; i < gpt->header.num_part_ents; i++)
-			{
-				if (!memcmp(gpt->entries[i].name, (char[]) { 'L', 0, 'N', 0, 'X', 0 }, 6))
-				{
-					offset_sct = gpt->entries[i].lba_start;
-					size_sct = (gpt->entries[i].lba_end + 1) - gpt->entries[i].lba_start;
-					break;
-				}
-
-				if (i > 126)
-					break;
-			}
-
-			if (offset_sct && size_sct)
-			{
-				u32 file_size = 0;
-				u8 *buf = sd_file_read(path, &file_size);
-
-				if (file_size % 0x200)
-				{
-					file_size = ALIGN(file_size, 0x200);
-					u8 *buf_tmp = calloc(file_size, 1);
-					memcpy(buf_tmp, buf, file_size);
-					free(buf);
-					buf = buf_tmp;
-				}
-
-				if ((file_size >> 9) > size_sct)
-					s_printf(txt_buf, "#FF8000 Warning:# Kernel image too big!\n");
-				else
-				{
-					sdmmc_storage_write(&sd_storage, offset_sct, file_size >> 9, buf);
-
-					s_printf(txt_buf, "#C7EA46 Success:# Kernel image flashed!\n");
-					f_unlink(path);
-				}
-
-				free(buf);
-			}
-			else
-				s_printf(txt_buf, "#FF8000 Warning:# Kernel partition not found!\n");
+			file_size = ALIGN(file_size, 0x200);
+			u8 *buf_tmp = calloc(file_size, 1);
+			memcpy(buf_tmp, buf, file_size);
+			free(buf);
+			buf = buf_tmp;
 		}
+
+		if ((file_size >> 9) > size_sct)
+			s_printf(txt_buf, "#FF8000 Warning:# Kernel image too big!\n");
 		else
-			s_printf(txt_buf, "#FF8000 Warning:# Kernel image not found!\n");
-
-		lv_label_set_text(lbl_status, txt_buf);
-		manual_system_maintenance(true);
-
-		strcpy(path, "switchroot/install/twrp.img");
-		if (!f_stat(path, NULL))
 		{
-			u32 offset_sct = 0;
-			u32 size_sct = 0;
-			for (u32 i = 0; i < gpt->header.num_part_ents; i++)
-			{
-				if (!memcmp(gpt->entries[i].name, (char[]) { 'S', 0, 'O', 0, 'S', 0 }, 6))
-				{
-					offset_sct = gpt->entries[i].lba_start;
-					size_sct = (gpt->entries[i].lba_end + 1) - gpt->entries[i].lba_start;
-					break;
-				}
+			sdmmc_storage_write(&sd_storage, offset_sct, file_size >> 9, buf);
 
-				if (i > 126)
-					break;
-			}
-
-			if (offset_sct && size_sct)
-			{
-				u32 file_size = 0;
-				u8 *buf = sd_file_read(path, &file_size);
-
-				if (file_size % 0x200)
-				{
-					file_size = ALIGN(file_size, 0x200);
-					u8 *buf_tmp = calloc(file_size, 1);
-					memcpy(buf_tmp, buf, file_size);
-					free(buf);
-					buf = buf_tmp;
-				}
-
-				if ((file_size >> 9) > size_sct)
-					strcat(txt_buf, "#FF8000 Warning:# TWRP image too big!\n");
-				else
-				{
-					sdmmc_storage_write(&sd_storage, offset_sct, file_size >> 9, buf);
-					strcat(txt_buf, "#C7EA46 Success:# TWRP image flashed!\n");
-					f_unlink(path);
-				}
-
-				free(buf);
-			}
-			else
-				strcat(txt_buf, "#FF8000 Warning:# TWRP partition not found!\n");
+			s_printf(txt_buf, "#C7EA46 Success:# Kernel image flashed!\n");
+			f_unlink(path);
 		}
+
+		free(buf);
+	}
+	else
+		s_printf(txt_buf, "#FF8000 Warning:# Kernel partition not found!\n");
+
+boot_img_not_found:
+	lv_label_set_text(lbl_status, txt_buf);
+	manual_system_maintenance(true);
+
+	strcpy(path, "switchroot/install/twrp.img");
+	if (f_stat(path, NULL))
+	{
+		strcat(txt_buf, "#FF8000 Warning:# TWRP image not found!\n");
+		goto twrp_not_found;
+	}
+
+	offset_sct = 0;
+	size_sct = 0;
+	for (u32 i = 0; i < gpt->header.num_part_ents; i++)
+	{
+		if (!memcmp(gpt->entries[i].name, (char[]) { 'S', 0, 'O', 0, 'S', 0 }, 6))
+		{
+			offset_sct = gpt->entries[i].lba_start;
+			size_sct = (gpt->entries[i].lba_end + 1) - gpt->entries[i].lba_start;
+			break;
+		}
+
+		if (i > 126)
+			break;
+	}
+
+	if (offset_sct && size_sct)
+	{
+		u32 file_size = 0;
+		u8 *buf = sd_file_read(path, &file_size);
+
+		if (file_size % 0x200)
+		{
+			file_size = ALIGN(file_size, 0x200);
+			u8 *buf_tmp = calloc(file_size, 1);
+			memcpy(buf_tmp, buf, file_size);
+			free(buf);
+			buf = buf_tmp;
+		}
+
+		if ((file_size >> 9) > size_sct)
+			strcat(txt_buf, "#FF8000 Warning:# TWRP image too big!\n");
 		else
-			strcat(txt_buf, "#FF8000 Warning:# TWRP image not found!\n");
-
-		lv_label_set_text(lbl_status, txt_buf);
-		manual_system_maintenance(true);
-
-		strcpy(path, "switchroot/install/tegra210-icosa.dtb");
-		if (!f_stat(path, NULL))
 		{
-			u32 offset_sct = 0;
-			u32 size_sct = 0;
-			for (u32 i = 0; i < gpt->header.num_part_ents; i++)
-			{
-				if (!memcmp(gpt->entries[i].name, (char[]) { 'D', 0, 'T', 0, 'B', 0 }, 6))
-				{
-					offset_sct = gpt->entries[i].lba_start;
-					size_sct = (gpt->entries[i].lba_end + 1) - gpt->entries[i].lba_start;
-					break;
-				}
-
-				if (i > 126)
-					break;
-			}
-
-			if (offset_sct && size_sct)
-			{
-				u32 file_size = 0;
-				u8 *buf = sd_file_read(path, &file_size);
-
-				if (file_size % 0x200)
-				{
-					file_size = ALIGN(file_size, 0x200);
-					u8 *buf_tmp = calloc(file_size, 1);
-					memcpy(buf_tmp, buf, file_size);
-					free(buf);
-					buf = buf_tmp;
-				}
-
-				if ((file_size >> 9) > size_sct)
-					strcat(txt_buf, "#FF8000 Warning:# DTB image too big!");
-				else
-				{
-					sdmmc_storage_write(&sd_storage, offset_sct, file_size >> 9, buf);
-					strcat(txt_buf, "#C7EA46 Success:# DTB image flashed!");
-					f_unlink(path);
-				}
-
-				free(buf);
-			}
-			else
-				strcat(txt_buf, "#FF8000 Warning:# DTB partition not found!");
+			sdmmc_storage_write(&sd_storage, offset_sct, file_size >> 9, buf);
+			strcat(txt_buf, "#C7EA46 Success:# TWRP image flashed!\n");
+			f_unlink(path);
 		}
+
+		free(buf);
+	}
+	else
+		strcat(txt_buf, "#FF8000 Warning:# TWRP partition not found!\n");
+
+twrp_not_found:
+	lv_label_set_text(lbl_status, txt_buf);
+	manual_system_maintenance(true);
+
+	strcpy(path, "switchroot/install/tegra210-icosa.dtb");
+	if (f_stat(path, NULL))
+	{
+		strcat(txt_buf, "#FF8000 Warning:# DTB image not found!");
+
+		goto dtb_not_found;
+	}
+
+	offset_sct = 0;
+	size_sct = 0;
+	for (u32 i = 0; i < gpt->header.num_part_ents; i++)
+	{
+		if (!memcmp(gpt->entries[i].name, (char[]) { 'D', 0, 'T', 0, 'B', 0 }, 6))
+		{
+			offset_sct = gpt->entries[i].lba_start;
+			size_sct = (gpt->entries[i].lba_end + 1) - gpt->entries[i].lba_start;
+			break;
+		}
+
+		if (i > 126)
+			break;
+	}
+
+	if (offset_sct && size_sct)
+	{
+		u32 file_size = 0;
+		u8 *buf = sd_file_read(path, &file_size);
+
+		if (file_size % 0x200)
+		{
+			file_size = ALIGN(file_size, 0x200);
+			u8 *buf_tmp = calloc(file_size, 1);
+			memcpy(buf_tmp, buf, file_size);
+			free(buf);
+			buf = buf_tmp;
+		}
+
+		if ((file_size >> 9) > size_sct)
+			strcat(txt_buf, "#FF8000 Warning:# DTB image too big!");
 		else
-			strcat(txt_buf, "#FF8000 Warning:# DTB image not found!");
-
-		lv_label_set_text(lbl_status, txt_buf);
-
-		// Check if TWRP is flashed unconditionally.
-		for (u32 i = 0; i < gpt->header.num_part_ents; i++)
 		{
-			if (!memcmp(gpt->entries[i].name, (char[]) { 'S', 0, 'O', 0, 'S', 0 }, 6))
-			{
-				u8 *buf = malloc(512);
-				sdmmc_storage_read(&sd_storage, gpt->entries[i].lba_start, 1, buf);
-				if (!memcmp(buf, "ANDROID", 7))
-					boot_twrp = true;
-				free(buf);
-				break;
-			}
-
-			if (i > 126)
-				break;
+			sdmmc_storage_write(&sd_storage, offset_sct, file_size >> 9, buf);
+			strcat(txt_buf, "#C7EA46 Success:# DTB image flashed!");
+			f_unlink(path);
 		}
+
+		free(buf);
+	}
+	else
+		strcat(txt_buf, "#FF8000 Warning:# DTB partition not found!");
+
+dtb_not_found:
+	lv_label_set_text(lbl_status, txt_buf);
+
+	// Check if TWRP is flashed unconditionally.
+	for (u32 i = 0; i < gpt->header.num_part_ents; i++)
+	{
+		if (!memcmp(gpt->entries[i].name, (char[]) { 'S', 0, 'O', 0, 'S', 0 }, 6))
+		{
+			u8 *buf = malloc(512);
+			sdmmc_storage_read(&sd_storage, gpt->entries[i].lba_start, 1, buf);
+			if (!memcmp(buf, "ANDROID", 7))
+				boot_twrp = true;
+			free(buf);
+			break;
+		}
+
+		if (i > 126)
+			break;
+	}
 
 error:
-		if (boot_twrp)
-		{
-			strcat(txt_buf,"\n\nDo you want to reboot into TWRP\nto finish Android installation?");
-			lv_label_set_text(lbl_status, txt_buf);
-			lv_mbox_add_btns(mbox, mbox_btn_map2, _action_reboot_twrp);
-		}
-		else
-			lv_mbox_add_btns(mbox, mbox_btn_map, mbox_action);
-
-		lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
-
-		free(txt_buf);
-		free(gpt);
-
-		sd_unmount();
+	if (boot_twrp)
+	{
+		strcat(txt_buf,"\n\nDo you want to reboot into TWRP\nto finish Android installation?");
+		lv_label_set_text(lbl_status, txt_buf);
+		lv_mbox_add_btns(mbox, mbox_btn_map2, _action_reboot_twrp);
 	}
+	else
+		lv_mbox_add_btns(mbox, mbox_btn_map, mbox_action);
+
+	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+
+	free(txt_buf);
+	free(gpt);
+
+	sd_unmount();
 
 	return LV_RES_INV;
 }
@@ -1315,7 +1306,7 @@ static lv_res_t _create_mbox_start_partitioning(lv_obj_t *btn)
 
 	if (!part_info.backup_possible)
 	{
-		char *txt_buf = malloc(0x1000);
+		char *txt_buf = malloc(SZ_4K);
 		strcpy(txt_buf, "#FF8000 Partition Manager#\n\nSafety wait ends in ");
 		lv_mbox_set_text(mbox, txt_buf);
 
@@ -1418,60 +1409,64 @@ static lv_res_t _create_mbox_start_partitioning(lv_obj_t *btn)
 
 	// Set reserved size.
 	u32 part_rsvd_size = (part_info.emu_size << 11) + (part_info.l4t_size << 11) + (part_info.and_size << 11);
-	part_rsvd_size += part_info.alignment;
+	part_rsvd_size += part_rsvd_size ? part_info.alignment : 0; // Do not reserve alignment space if no extra partitions.
 	disk_set_info(DRIVE_SD, SET_SECTOR_COUNT, &part_rsvd_size);
-	u8 *buf = malloc(0x400000);
+	u8 *buf = malloc(SZ_4M);
 
 	u32 cluster_size = 65536;
-	u32 mkfs_error = f_mkfs("sd:", FM_FAT32, cluster_size, buf, 0x400000);
+	u32 mkfs_error = f_mkfs("sd:", FM_FAT32, cluster_size, buf, SZ_4M);
+
+	if (!mkfs_error)
+		goto mkfs_no_error;
+
+	// Retry by halving cluster size.
+	while (cluster_size > 4096)
+	{
+		cluster_size /= 2;
+		mkfs_error = f_mkfs("sd:", FM_FAT32, cluster_size, buf, SZ_4M);
+
+		if (!mkfs_error)
+			break;
+	}
+
 	if (mkfs_error)
 	{
-		// Retry by halving cluster size.
-		while (cluster_size > 4096)
-		{
-			cluster_size /= 2;
-			mkfs_error = f_mkfs("sd:", FM_FAT32, cluster_size, buf, 0x400000);
+		// Failed to format.
+		s_printf((char *)buf, "#FFDD00 Error:# Failed to format disk (%d)!\n\n"
+			"Remove the SD card and check that is OK.\nIf not, format it, reinsert it and\npress #FF8000 POWER#!", mkfs_error);
 
-			if (!mkfs_error)
-				break;
+		lv_label_set_text(lbl_status, (char *)buf);
+		lv_label_set_text(lbl_paths[0], " ");
+		manual_system_maintenance(true);
+
+		sd_end();
+
+		while (!(btn_wait() & BTN_POWER));
+
+		sd_mount();
+
+		if (!part_info.backup_possible)
+		{
+			f_chdrive("sd:");
+			f_mkdir(path);
 		}
 
-		if (mkfs_error)
+		lv_label_set_text(lbl_status, "#00DDFF Status:# Restoring files...");
+		manual_system_maintenance(true);
+		if (_backup_and_restore_files(path, &total_files, &total_size, "sd:", "ram:", NULL))
 		{
-			// Failed to format.
-			s_printf((char *)buf, "#FFDD00 Error:# Failed to format disk (%d)!\n\n"
-				"Remove the SD card and check that is OK.\nIf not, format it, reinsert it and\npress #FF8000 POWER#!", mkfs_error);
-
-			lv_label_set_text(lbl_status, (char *)buf);
-			lv_label_set_text(lbl_paths[0], " ");
-			manual_system_maintenance(true);
-
-			sd_end();
-
-			while (!(btn_wait() & BTN_POWER));
-
-			sd_mount();
-
-			if (!part_info.backup_possible)
-			{
-				f_chdrive("sd:");
-				f_mkdir(path);
-			}
-
-			lv_label_set_text(lbl_status, "#00DDFF Status:# Restoring files...");
-			manual_system_maintenance(true);
-			if (_backup_and_restore_files(path, &total_files, &total_size, "sd:", "ram:", NULL))
-			{
-				lv_label_set_text(lbl_status, "#FFDD00 Error:# Failed to restore files!");
-				free(buf);
-				goto error;
-			}
-			lv_label_set_text(lbl_status, "#00DDFF Status:# Restored files but the operation failed!");
-			f_mount(NULL, "ram:", 1); // Unmount ramdisk.
+			lv_label_set_text(lbl_status, "#FFDD00 Error:# Failed to restore files!");
 			free(buf);
 			goto error;
 		}
+
+		lv_label_set_text(lbl_status, "#00DDFF Status:# Restored files but the operation failed!");
+		f_mount(NULL, "ram:", 1); // Unmount ramdisk.
+		free(buf);
+		goto error;
 	}
+
+mkfs_no_error:
 	free(buf);
 
 	f_mount(&sd_fs, "sd:", 1); // Mount SD card.
@@ -1625,7 +1620,7 @@ static lv_res_t _create_mbox_partitioning_next(lv_obj_t *btn)
 	lv_obj_t * mbox = lv_mbox_create(dark_bg, NULL);
 	lv_mbox_set_recolor_text(mbox, true);
 
-	char *txt_buf = malloc(0x1000);
+	char *txt_buf = malloc(SZ_4K);
 	lv_obj_set_width(mbox, LV_HOR_RES / 9 * 6);
 	lv_mbox_set_text(mbox, "#FF8000 Partition Manager#");
 
@@ -1691,11 +1686,15 @@ static void _update_partition_bar()
 
 static lv_res_t _action_slider_emu(lv_obj_t *slider)
 {
+	#define EMUMMC_32GB_FULL 29856
+	#define EMUMMC_64GB_FULL (59664 + 1) // 1MB extra for backup GPT.
+
+	const u32 rsvd_mb = 4 + 4 + 16 + 8; // BOOT0 + BOOT1 + 16MB offset + 8MB alignment.
 	u32 size;
 	char lbl_text[64];
 	bool prev_emu_double = part_info.emu_double;
 	int slide_val = lv_slider_get_value(slider);
-	const u32 rsvd_mb = 4 + 4 + 16 + 8; // BOOT0 + BOOT1 + 16MB offset + 8MB alignment.
+	u32 max_emmc_size = !part_info.emmc_is_64gb ? EMUMMC_32GB_FULL : EMUMMC_64GB_FULL;
 
 	part_info.emu_double = false;
 
@@ -1711,11 +1710,11 @@ static lv_res_t _action_slider_emu(lv_obj_t *slider)
 		part_info.emu_double = true;
 	}
 
-	// Handle special case.
+	// Handle special cases. 2nd value is for 64GB Aula.
 	if (slide_val == 10)
-		size = 29856;
+		size = max_emmc_size;
 	else if (slide_val == 20)
-		size = 59712;
+		size = 2 * max_emmc_size;
 
 	s32 hos_size = (part_info.total_sct >> 11) - 16 - size - part_info.l4t_size - part_info.and_size;
 	if (hos_size > 2048)
@@ -1742,9 +1741,9 @@ static lv_res_t _action_slider_emu(lv_obj_t *slider)
 	{
 		u32 emu_size = part_info.emu_size;
 
-		if (emu_size == 29856)
+		if (emu_size == max_emmc_size)
 			emu_size = 10;
-		else if (emu_size == 59712)
+		else if (emu_size == 2 * max_emmc_size)
 			emu_size = 20;
 		else if (emu_size)
 		{
@@ -1891,7 +1890,7 @@ static void create_mbox_check_files_total_size()
 	sep_and_bg.body.main_color = LV_COLOR_HEX(0xFF8000);
 	sep_and_bg.body.grad_color = sep_and_bg.body.main_color;
 
-	char *txt_buf = malloc(0x2000);
+	char *txt_buf = malloc(SZ_8K);
 
 	lv_obj_t *dark_bg = lv_obj_create(lv_scr_act(), NULL);
 	lv_obj_set_style(dark_bg, &mbox_darken);
@@ -1917,7 +1916,7 @@ static void create_mbox_check_files_total_size()
 	int res = _backup_and_restore_files(path, &total_files, &total_size, NULL, NULL, NULL);
 
 	// Not more than 1.0GB.
-	part_info.backup_possible = !res && !(total_size > (RAM_DISK_SZ - 0x1000000)); // 0x2400000
+	part_info.backup_possible = !res && !(total_size > (RAM_DISK_SZ - SZ_16M)); // 0x2400000
 
 	if (part_info.backup_possible)
 	{
@@ -2125,7 +2124,7 @@ static lv_res_t _action_fix_mbr(lv_obj_t *btn)
 			break;
 	}
 
-	nx_emmc_gpt_free(&gpt_parsed);
+	emmc_gpt_free(&gpt_parsed);
 
 	// Set GPT protective partition.
 	mbr[1].partitions[mbr_idx].type = 0xEE;
@@ -2151,7 +2150,7 @@ static lv_res_t _action_fix_mbr(lv_obj_t *btn)
 		goto out;
 	}
 
-	char *txt_buf = malloc(0x4000);
+	char *txt_buf = malloc(SZ_16K);
 
 	s_printf(txt_buf, "#00DDFF Current MBR Layout:#\n");
 	s_printf(txt_buf + strlen(txt_buf),
@@ -2292,18 +2291,21 @@ lv_res_t create_window_partition_manager(lv_obj_t *btn)
 	memset(&part_info, 0, sizeof(partition_ctxt_t));
 	create_mbox_check_files_total_size();
 
-	char *txt_buf = malloc(0x2000);
+	char *txt_buf = malloc(SZ_8K);
 
 	part_info.total_sct = sd_storage.sec_cnt;
 
 	// Align down total size to ensure alignment of all partitions after HOS one.
-	part_info.alignment = part_info.total_sct - ALIGN_DOWN(part_info.total_sct, 0x8000);	
+	part_info.alignment = part_info.total_sct - ALIGN_DOWN(part_info.total_sct, 0x8000);
 	part_info.total_sct -= part_info.alignment;
 
 	u32 extra_sct = 0x8000 + 0x400000; // Reserved 16MB alignment for FAT partition + 2GB.
 
 	// Set initial HOS partition size, so the correct cluster size can be selected.
 	part_info.hos_size = (part_info.total_sct >> 11) - 16; // Important if there's no slider change.
+
+	// Check if eMMC should be 64GB (Aula).
+	part_info.emmc_is_64gb = fuse_read_hw_type() == FUSE_NX_HW_TYPE_AULA;
 
 	// Read current MBR.
 	mbr_t mbr = { 0 };
@@ -2315,7 +2317,8 @@ lv_res_t create_window_partition_manager(lv_obj_t *btn)
 	u32 bar_and_size = 0;
 
 	lv_obj_t *lbl = lv_label_create(h1, NULL);
-	lv_label_set_text(lbl, "New partition layout:");
+	lv_label_set_recolor(lbl, true);
+	lv_label_set_text(lbl, "Choose #FFDD00 new# partition layout:");
 
 	lv_obj_t *bar_hos = lv_bar_create(h1, NULL);
 	lv_obj_set_size(bar_hos, bar_hos_size, LV_DPI / 2);
@@ -2493,7 +2496,6 @@ lv_res_t create_window_partition_manager(lv_obj_t *btn)
 	lv_label_set_static_text(label_btn, SYMBOL_SD"  Next Step");
 	lv_obj_align(btn1, h1, LV_ALIGN_IN_TOP_RIGHT, 0, LV_DPI * 5);
 	lv_btn_set_action(btn1, LV_BTN_ACTION_CLICK, _create_mbox_partitioning_next);
-	part_info.btn_partition = btn1;
 
 	free(txt_buf);
 

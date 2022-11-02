@@ -8,7 +8,6 @@ include $(DEVKITARM)/base_rules
 
 NYX_LOAD_ADDR := 0x81000000
 NYX_MAGIC := 0x43544347 #"GCTC"
-#include ./../Versions.inc
 
 ################################################################################
 
@@ -36,7 +35,7 @@ OBJS += $(addprefix $(BUILDDIR)/$(TARGET)/, \
 	bpmp.o ccplex.o clock.o di.o gpio.o i2c.o irq.o pinmux.o pmc.o se.o smmu.o tsec.o uart.o \
 	fuse.o kfuse.o \
 	mc.o sdram.o minerva.o ramdisk.o \
-	sdmmc.o sdmmc_driver.o nx_emmc.o nx_emmc_bis.o nx_sd.o \
+	sdmmc.o sdmmc_driver.o emmc.o sd.o nx_emmc_bis.o \
 	bm92t36.o bq24193.o max17050.o max7762x.o max77620-rtc.o regulator_5v.o \
 	touch.o joycon.o tmp451.o fan.o \
 	usbd.o xusbd.o usb_descriptors.o usb_gadget_ums.o usb_gadget_hid.o \
@@ -52,8 +51,7 @@ OBJS += $(addprefix $(BUILDDIR)/$(TARGET)/, \
 
 # Horizon.
 OBJS += $(addprefix $(BUILDDIR)/$(TARGET)/, \
-	nx_emmc.o \
-	hos.o pkg1.o pkg2.o sept.o \
+	hos.o pkg1.o pkg2.o \
 )
 
 # Libraries.
@@ -71,7 +69,6 @@ OBJS += $(addprefix $(BUILDDIR)/$(TARGET)/, \
 	lv_theme.o lv_theme_storm.o \
 )
 
-# geändert für Ordner gui
 GFX_INC   := '"../gui/$(SOURCEDIR)/gfx/gfx.h"'
 FFCFG_INC := '"../gui/$(SOURCEDIR)/libs/fatfs/ffconf.h"'
 
@@ -79,7 +76,10 @@ FFCFG_INC := '"../gui/$(SOURCEDIR)/libs/fatfs/ffconf.h"'
 
 CUSTOMDEFINES := -DNYX_LOAD_ADDR=$(NYX_LOAD_ADDR) -DNYX_MAGIC=$(NYX_MAGIC)
 CUSTOMDEFINES += -DNYX_VER_MJ=$(NYXVERSION_MAJOR) -DNYX_VER_MN=$(NYXVERSION_MINOR) -DNYX_VER_HF=$(NYXVERSION_HOTFX) -DNYX_RESERVED=$(NYXVERSION_RSVD)
-CUSTOMDEFINES += -DNYX -DGFX_INC=$(GFX_INC) -DFFCFG_INC=$(FFCFG_INC)
+
+# BDK defines.
+CUSTOMDEFINES += -DBDK_MC_ENABLE_AHB_REDIRECT -DBDK_MINERVA_CFG_FROM_RAM -DBDK_HW_EXTRA_DEINIT -DBDK_SDMMC_OC_AND_EXTRA_PRINT
+CUSTOMDEFINES += -DGFX_INC=$(GFX_INC) -DFFCFG_INC=$(FFCFG_INC)
 
 #CUSTOMDEFINES += -DDEBUG
 
@@ -94,7 +94,7 @@ CUSTOMDEFINES += -DNYX -DGFX_INC=$(GFX_INC) -DFFCFG_INC=$(FFCFG_INC)
 WARNINGS := -Wall -Wno-array-bounds -Wno-stringop-overread -Wno-stringop-overflow
 
 ARCH := -march=armv4t -mtune=arm7tdmi -mthumb-interwork
-CFLAGS = $(ARCH) -O2 -g -nostdlib -ffunction-sections -fdata-sections -fomit-frame-pointer -std=gnu11 $(WARNINGS) $(CUSTOMDEFINES)
+CFLAGS = $(ARCH) -O2 -g -gdwarf-4 -nostdlib -ffunction-sections -fdata-sections -fomit-frame-pointer -std=gnu11 $(WARNINGS) $(CUSTOMDEFINES)
 LDFLAGS = $(ARCH) -nostartfiles -lgcc -Wl,--nmagic,--gc-sections -Xlinker --defsym=NYX_LOAD_ADDR=$(NYX_LOAD_ADDR)
 
 ################################################################################

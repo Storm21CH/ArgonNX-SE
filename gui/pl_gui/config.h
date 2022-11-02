@@ -17,8 +17,9 @@
 #ifndef _CONFIG_H_
 #define _CONFIG_H_
 
+#include <bdk.h>
+
 #include "hos/hos.h"
-#include <utils/types.h>
 
 typedef struct _hekate_config
 {
@@ -33,12 +34,8 @@ typedef struct _hekate_config
 	u32 bootprotect;
 	// Global temporary config.
 	bool t210b01;
-	bool se_keygen_done;
-	bool sept_run;
-	bool aes_slots_new;
 	bool emummc_force_disable;
 	bool rcm_patched;
-	bool sbk_set;
 	u32  errors;
 	hos_eks_mbr_t *eks;
 } hekate_config;
@@ -51,6 +48,7 @@ typedef struct _nyx_config
 	u32 verification;
 	u32 ums_emmc_rw;
 	u32 jc_disable;
+	u32 jc_force_right;
 	u32 bpmp_clock;
 } nyx_config;
 

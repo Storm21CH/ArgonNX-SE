@@ -1,5 +1,7 @@
 /*-----------------------------------------------------------------------*/
-/* Low level disk I/O module skeleton for FatFs     (C)ChaN, 2016        */
+/* Low level disk I/O module skeleton for FatFs                          */
+/* (C) ChaN, 2016                                                        */
+/* (C) CTCaer, 2018-2020                                                 */
 /*-----------------------------------------------------------------------*/
 /* If a working storage control module is available, it should be        */
 /* attached to the FatFs via a glue function rather than modifying it.   */
@@ -9,12 +11,9 @@
 
 #include <string.h>
 
+#include <bdk.h>
+
 #include <libs/fatfs/diskio.h>	/* FatFs lower layer API */
-#include <memory_map.h>
-#include "../../storage/nx_emmc_bis.h"
-#include <storage/nx_sd.h>
-#include <storage/ramdisk.h>
-#include <storage/sdmmc.h>
 
 static u32 sd_rsvd_sectors = 0;
 static u32 ramdisk_sectors = 0;

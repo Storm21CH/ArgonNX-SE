@@ -19,13 +19,11 @@
 
 #include <string.h>
 
+#include <bdk.h>
+
 #include "hos.h"
 #include "pkg1.h"
 #include "../config.h"
-#include <gfx_utils.h>
-#include <mem/heap.h>
-#include <sec/se.h>
-#include <utils/aarch64_util.h>
 
 extern hekate_config h_cfg;
 
@@ -60,7 +58,11 @@ static const pkg1_id_t _pkg1_ids[] = {
 	{ "20200303104606", 10, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000 }, // 10.0.0 - 10.2.0.
 	{ "20201030110855", 10, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000 }, // 11.0.0 - 11.0.1.
 	{ "20210129111626", 10, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000 }, // 12.0.0 - 12.0.1.
-	{ "20210422145837", 10, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000 }, // 12.0.2+
+	{ "20210422145837", 10, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000 }, // 12.0.2 - 12.0.3.
+	{ "20210607122020", 11, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000 }, // 12.1.0.
+	{ "20210805123730", 12, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000 }, // 13.0.0 - 13.2.0
+	{ "20220105094454", 12, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000 }, // 13.2.1.
+	{ "20220209100018", 13, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000 }, // 14.0.0+
 };
 
 const pkg1_id_t *pkg1_identify(u8 *pkg1, char *build_date)
@@ -98,7 +100,7 @@ int pkg1_decrypt(const pkg1_id_t *id, u8 *pkg1)
 		// Use BEK for T210B01.
 		// Additionally, skip 0x20 bytes from decryption to maintain the header.
 		se_aes_iv_clear(13);
-		se_aes_crypt_cbc(13, 0, pkg1 + 0x20, oem_hdr->size - 0x20, pkg1 + 0x20, oem_hdr->size - 0x20);
+		se_aes_crypt_cbc(13, DECRYPT, pkg1 + 0x20, oem_hdr->size - 0x20, pkg1 + 0x20, oem_hdr->size - 0x20);
 	}
 
 	// Return if header is valid.
@@ -114,9 +116,9 @@ const u8 *pkg1_unpack(void *wm_dst, void *sm_dst, void *ldr_dst, const pkg1_id_t
 	//u32 sec_off[3] = { hdr->wb_off, hdr->ldr_off, hdr->sm_off };
 
 	// Get correct header mapping.
-	if (id->kb == KB_FIRMWARE_VERSION_100_200 && !strcmp(id->id, "20161121183008"))
+	if (id->kb == KB_FIRMWARE_VERSION_100 && !strcmp(id->id, "20161121183008"))
 		sec_map = sec_map_100;
-	else if (id->kb >= KB_FIRMWARE_VERSION_100_200 && id->kb <= KB_FIRMWARE_VERSION_301)
+	else if (id->kb >= KB_FIRMWARE_VERSION_100 && id->kb <= KB_FIRMWARE_VERSION_301)
 		sec_map = sec_map_2xx;
 	else
 		sec_map = sec_map_4xx;

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021 CTCaer
+ * Copyright (c) 2019-2022 Storm21
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -16,18 +17,11 @@
 
 #include <stdlib.h>
 
+#include <bdk.h>
+
 #include "gui.h"
 #include "../config.h"
-#include <utils/ini.h>
-#include <display/di.h>
-#include <input/joycon.h>
 #include <libs/lvgl/lvgl.h>
-#include <mem/heap.h>
-#include <rtc/max77620-rtc.h>
-#include <storage/nx_sd.h>
-#include <utils/list.h>
-#include <utils/sprintf.h>
-#include <utils/types.h>
 
 extern hekate_config h_cfg;
 extern nyx_config n_cfg;
@@ -129,7 +123,6 @@ lv_obj_t *create_window_autoboot(const char *win_title)
 	return win;
 }
 
-// TODO: instant update of button for these.
 static lv_res_t _autoboot_disable_action(lv_obj_t *btn)
 {
 	h_cfg.autoboot = 0;
@@ -142,6 +135,8 @@ static lv_res_t _autoboot_disable_action(lv_obj_t *btn)
 	lv_obj_t * win = lv_win_get_from_btn(btn);
 
 	lv_obj_del(win);
+
+	close_btn = NULL;
 
 	return LV_RES_OK;
 }
@@ -162,6 +157,8 @@ static lv_res_t _autoboot_enable_main_action(lv_obj_t *btn)
 		obj = lv_obj_get_parent(obj);
 	lv_obj_del(obj);
 
+	close_btn = NULL;
+
 	return LV_RES_INV;
 }
 
@@ -178,6 +175,8 @@ static lv_res_t _autoboot_enable_more_action(lv_obj_t *btn)
 	for (int i = 0; i < 5; i++)
 		obj = lv_obj_get_parent(obj);
 	lv_obj_del(obj);
+
+	close_btn = NULL;
 
 	return LV_RES_INV;
 }
@@ -605,9 +604,8 @@ static lv_res_t _action_clock_edit(lv_obj_t *btns, const char * txt)
 			break;
 		case 4:
 		case 6:
-		case 8:
-		case 10:
-		case 12:
+		case 9:
+		case 11:
 			if (day > 30)
 				day = 30;
 			break;
@@ -764,8 +762,8 @@ static lv_res_t _joycon_info_dump_action(lv_obj_t * btn)
 	bool is_r_hos = false;
 	jc_gamepad_rpt_t *jc_pad = jc_get_bt_pairing_info(&is_l_hos, &is_r_hos);
 
-	char *data = (char *)malloc(0x4000);
-	char *txt_buf = (char *)malloc(0x1000);
+	char *data = (char *)malloc(SZ_16K);
+	char *txt_buf = (char *)malloc(SZ_4K);
 
 	if (!jc_pad)
 	{
@@ -1159,8 +1157,6 @@ void create_tab_options(lv_theme_t *th, lv_obj_t *parent)
 	{
 		lv_btn_set_style(btn, LV_BTN_STYLE_REL, &btn_transp_rel);
 		lv_btn_set_style(btn, LV_BTN_STYLE_PR, &btn_transp_pr);
-		//lv_btn_set_style(btn, LV_BTN_STYLE_TGL_REL, &btn_transp_tgl_rel);//////////////////////////////////////////////////////////////////////////////////////////////////
-		//lv_btn_set_style(btn, LV_BTN_STYLE_TGL_PR, &btn_transp_tgl_pr);
 	}
 	lv_btn_set_layout(btn, LV_LAYOUT_OFF);
 	lv_obj_t *label_btn = lv_label_create(btn, NULL);
@@ -1208,10 +1204,7 @@ void create_tab_options(lv_theme_t *th, lv_obj_t *parent)
 
 	if (hekate_bg)
 	{
-		//lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_BG, &ddlist_transp_bg);//////////////////////////////////////////////////////////////////////////////////
-		//lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_BGO, &ddlist_transp_bg);
-		//lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_PR, &ddlist_transp_sel);
-		//lv_ddlist_set_style(ddlist, LV_DDLIST_STYLE_SEL, &ddlist_transp_sel);
+
 	}
 
 	label_txt2 = lv_label_create(l_cont, NULL);
