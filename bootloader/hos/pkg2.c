@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018-2021 CTCaer
+ * Copyright (c) 2018-2022 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -17,6 +17,8 @@
 
 #include <string.h>
 
+#include <bdk.h>
+
 #include "hos.h"
 #include "pkg2.h"
 #include "pkg2_ini_kippatch.h"
@@ -24,14 +26,10 @@
 #include "../config.h"
 #include <libs/compr/blz.h>
 #include <libs/fatfs/ff.h>
-#include <mem/heap.h>
-#include <sec/se.h>
-#include <sec/se_t210.h>
 #include "../storage/emummc.h"
-#include <storage/nx_sd.h>
-#include <utils/aarch64_util.h>
 
-#include <gfx_utils.h>
+//#define DPRINTF(...) gfx_printf(__VA_ARGS__)
+#define DPRINTF(...)
 
 extern hekate_config h_cfg;
 extern const u8 package2_keyseed[];
@@ -39,14 +37,6 @@ extern const u8 package2_keyseed[];
 u32 pkg2_newkern_ini1_val;
 u32 pkg2_newkern_ini1_start;
 u32 pkg2_newkern_ini1_end;
-
-#ifdef KIP1_PATCH_DEBUG
-	#include <utils/util.h>
-	#define DPRINTF(...) gfx_printf(__VA_ARGS__)
-	#define DEBUG_PRINTING
-#else
-	#define DPRINTF(...)
-#endif
 
 enum kip_offset_section
 {
@@ -63,7 +53,7 @@ enum kip_offset_section
 #define KIP_PATCH_OFFSET_MASK    (~KIP_PATCH_SECTION_MASK)
 #define GET_KIP_PATCH_SECTION(x) (((x) >> KIP_PATCH_SECTION_SHIFT) & 7)
 #define GET_KIP_PATCH_OFFSET(x)  ((x) & KIP_PATCH_OFFSET_MASK)
-#define KPS(x) ((u32)(x) << KIP_PATCH_SECTION_SHIFT)
+#define KPS(x)                   ((u32)(x) << KIP_PATCH_SECTION_SHIFT)
 
 #include "pkg2_patches.inl"
 
@@ -78,17 +68,13 @@ void pkg2_get_ids(kip1_id_t **ids, u32 *entries)
 
 static void parse_external_kip_patches()
 {
-	static bool ext_patches_done = false;
+	static bool ext_patches_parsed = false;
 
-	if (ext_patches_done)
+	if (ext_patches_parsed)
 		return;
 
-	u32 curr_kip_idx = 0;
-	char path[64];
-	strcpy(path, "bootloader/patches.ini");
-
 	LIST_INIT(ini_kip_sections);
-	if (ini_patch_parse(&ini_kip_sections, path))
+	if (ini_patch_parse(&ini_kip_sections, "bootloader/patches.ini"))
 	{
 		// Copy ids into a new patchset.
 		_kip_id_sets = calloc(sizeof(kip1_id_t), 256); // Max 256 kip ids.
@@ -99,13 +85,15 @@ static void parse_external_kip_patches()
 		{
 			kip1_id_t* curr_kip = NULL;
 			bool found = false;
-			for (curr_kip_idx = 0; curr_kip_idx < _kip_id_sets_cnt + 1; curr_kip_idx++)
+			for (u32 curr_kip_idx = 0; curr_kip_idx < _kip_id_sets_cnt + 1; curr_kip_idx++)
 			{
 				curr_kip = &_kip_id_sets[curr_kip_idx];
 
+				// Check if reached the end of predefined list.
 				if (!curr_kip->name)
 					break;
 
+				// Check if name and hash match.
 				if (!strcmp(curr_kip->name, ini_psec->name) && !memcmp(curr_kip->hash, ini_psec->hash, 8))
 				{
 					found = true;
@@ -146,23 +134,18 @@ static void parse_external_kip_patches()
 				if (first_ext_patch)
 				{
 					first_ext_patch = false;
-					patchsets[curr_patchset_idx].name = malloc(strlen(pt->name) + 1);
-					strcpy(patchsets[curr_patchset_idx].name, pt->name);
+					patchsets[curr_patchset_idx].name = pt->name;
 					patchsets[curr_patchset_idx].patches = patches;
 				}
-				else
+				else if (strcmp(pt->name, patchsets[curr_patchset_idx].name))
 				{
-					// Check if new patchset name is found and create a new set.
-					if (strcmp(pt->name, patchsets[curr_patchset_idx].name))
-					{
-						curr_patchset_idx++;
-						curr_patch_idx = 0;
-						patches = calloc(sizeof(kip1_patch_t), 16); // Max 16 patches per set.
+					// New patchset name found, create a new set.
+					curr_patchset_idx++;
+					curr_patch_idx = 0;
+					patches = calloc(sizeof(kip1_patch_t), 32); // Max 32 patches per set.
 
-						patchsets[curr_patchset_idx].name = malloc(strlen(pt->name) + 1);
-						strcpy(patchsets[curr_patchset_idx].name, pt->name);
-						patchsets[curr_patchset_idx].patches = patches;
-					}
+					patchsets[curr_patchset_idx].name = pt->name;
+					patchsets[curr_patchset_idx].patches = patches;
 				}
 
 				if (pt->length)
@@ -170,10 +153,8 @@ static void parse_external_kip_patches()
 					patches[curr_patch_idx].offset = pt->offset;
 					patches[curr_patch_idx].length = pt->length;
 
-					patches[curr_patch_idx].srcData = malloc(pt->length);
-					patches[curr_patch_idx].dstData = malloc(pt->length);
-					memcpy(patches[curr_patch_idx].srcData, pt->srcData, pt->length);
-					memcpy(patches[curr_patch_idx].dstData, pt->dstData, pt->length);
+					patches[curr_patch_idx].srcData = (char *)pt->srcData;
+					patches[curr_patch_idx].dstData = (char *)pt->dstData;
 				}
 				else
 					patches[curr_patch_idx].srcData = malloc(1); // Empty patches check. Keep everything else as 0.
@@ -186,7 +167,7 @@ static void parse_external_kip_patches()
 		}
 	}
 
-	ext_patches_done = true;
+	ext_patches_parsed = true;
 }
 
 const pkg2_kernel_id_t *pkg2_identify(u8 *hash)
@@ -321,7 +302,7 @@ int pkg2_decompress_kip(pkg2_kip1_info_t* ki, u32 sectsToDecomp)
 	unsigned int newKipSize = sizeof(hdr);
 	for (u32 sectIdx = 0; sectIdx < KIP1_NUM_SECTIONS; sectIdx++)
 	{
-		u32 sectCompBit = 1u << sectIdx;
+		u32 sectCompBit = BIT(sectIdx);
 		// For compressed, cant get actual decompressed size without doing it, so use safe "output size".
 		if (sectIdx < 3 && (sectsToDecomp & sectCompBit) && (hdr.flags & sectCompBit))
 			newKipSize += hdr.sections[sectIdx].size_decomp;
@@ -334,7 +315,7 @@ int pkg2_decompress_kip(pkg2_kip1_info_t* ki, u32 sectsToDecomp)
 	const unsigned char* srcDataPtr = ki->kip1->data;
 	for (u32 sectIdx = 0; sectIdx < KIP1_NUM_SECTIONS; sectIdx++)
 	{
-		u32 sectCompBit = 1u << sectIdx;
+		u32 sectCompBit = BIT(sectIdx);
 		// Easy copy path for uncompressed or ones we dont want to uncompress.
 		if (sectIdx >= 3 || !(sectsToDecomp & sectCompBit) || !(hdr.flags & sectCompBit))
 		{
@@ -350,11 +331,11 @@ int pkg2_decompress_kip(pkg2_kip1_info_t* ki, u32 sectsToDecomp)
 
 		unsigned int compSize = hdr.sections[sectIdx].size_comp;
 		unsigned int outputSize = hdr.sections[sectIdx].size_decomp;
-		gfx_printf("Decomping %s KIP1 sect %d of size %d...\n", (const char*)hdr.name, sectIdx, compSize);
+		gfx_printf("Decomping '%s', sect %d, size %d..\n", (const char*)hdr.name, sectIdx, compSize);
 		if (blz_uncompress_srcdest(srcDataPtr, compSize, dstDataPtr, outputSize) == 0)
 		{
 			gfx_con.mute = false;
-			gfx_printf("%kERROR decomping sect %d of %s KIP!%k\n", 0xFFFF0000, sectIdx, (char*)hdr.name, 0xFFCCCCCC);
+			gfx_printf("%kERROR decomping sect %d of '%s'!%k\n", 0xFFFF0000, sectIdx, (char*)hdr.name, 0xFFCCCCCC);
 			free(newKip);
 
 			return 1;
@@ -381,7 +362,7 @@ int pkg2_decompress_kip(pkg2_kip1_info_t* ki, u32 sectsToDecomp)
 
 static int _kipm_inject(const char *kipm_path, char *target_name, pkg2_kip1_info_t* ki)
 {
-	if (!strcmp((const char *)ki->kip1->name, target_name))
+	if (!strncmp((const char *)ki->kip1->name, target_name, sizeof(ki->kip1->name)))
 	{
 		u32 size = 0;
 		u8 *kipm_data = (u8 *)sd_file_read(kipm_path, &size);
@@ -442,18 +423,10 @@ static int _kipm_inject(const char *kipm_path, char *target_name, pkg2_kip1_info
 	return 1;
 }
 
-static bool ext_patches_parsed = false;
-
 const char* pkg2_patch_kips(link_t *info, char* patchNames)
 {
 	if (patchNames == NULL || patchNames[0] == 0)
 		return NULL;
-
-	if (!ext_patches_parsed)
-	{
-		parse_external_kip_patches();
-		ext_patches_parsed = true;
-	}
 
 	static const u32 MAX_NUM_PATCHES_REQUESTED = sizeof(u32) * 8;
 	char* patches[MAX_NUM_PATCHES_REQUESTED];
@@ -504,7 +477,17 @@ const char* pkg2_patch_kips(link_t *info, char* patchNames)
 		DPRINTF("Requested patch: '%s'\n", patches[i]);
 	}
 
-	u32 shaBuf[32 / sizeof(u32)];
+	// Parse external patches if needed.
+	for (u32 i = 0; i < numPatches; i++)
+	{
+		if (strcmp(patches[i], "emummc") && strcmp(patches[i], "nogc"))
+		{
+			parse_external_kip_patches();
+			break;
+		}
+	}
+
+	u32 shaBuf[SE_SHA_256_SIZE / sizeof(u32)];
 	LIST_FOREACH_ENTRY(pkg2_kip1_info_t, ki, info, link)
 	{
 		shaBuf[0] = 0; // sha256 for this kip not yet calculated.
@@ -555,29 +538,18 @@ const char* pkg2_patch_kips(link_t *info, char* patchNames)
 							continue;
 
 						if (!strcmp(currPatchset->name, "emummc"))
-							bitsAffected |= 1u << GET_KIP_PATCH_SECTION(currPatchset->patches->offset);
+							bitsAffected |= BIT(GET_KIP_PATCH_SECTION(currPatchset->patches->offset));
 
 						for (const kip1_patch_t* currPatch=currPatchset->patches; currPatch != NULL && (currPatch->length != 0); currPatch++)
-							bitsAffected |= 1u << GET_KIP_PATCH_SECTION(currPatch->offset);
+							bitsAffected |= BIT(GET_KIP_PATCH_SECTION(currPatch->offset));
 					}
 				}
 				currPatchset++;
 			}
 
 			// Got patches to apply to this kip, have to decompress it.
-#ifdef DEBUG_PRINTING
-			u32 preDecompTime = get_tmr_us();
-#endif
 			if (pkg2_decompress_kip(ki, bitsAffected))
 				return (const char*)ki->kip1->name; // Failed to decompress.
-
-#ifdef DEBUG_PRINTING
-			u32 postDecompTime = get_tmr_us();
-			if (!se_calc_sha256_oneshot(shaBuf, ki->kip1, ki->size))
-				memset(shaBuf, 0, sizeof(shaBuf));
-
-			DPRINTF("%dms %s KIP1 size %d hash %08X\n", (postDecompTime-preDecompTime) / 1000, ki->kip1->name, (int)ki->size, __builtin_bswap32(shaBuf[0]));
-#endif
 
 			currPatchset = _kip_id_sets[currKipIdx].patchset;
 			bool emummc_patch_selected = false;
@@ -588,19 +560,19 @@ const char* pkg2_patch_kips(link_t *info, char* patchNames)
 					if (strcmp(currPatchset->name, patches[currEnabIdx]))
 						continue;
 
-					u32 appliedMask = 1u << currEnabIdx;
+					u32 appliedMask = BIT(currEnabIdx);
 
 					if (!strcmp(currPatchset->name, "emummc"))
 					{
 						emummc_patch_selected = true;
 						patchesApplied |= appliedMask;
 
-						continue; // Continue in case it's double defined.
+						continue; // Patching is done later.
 					}
 
 					if (currPatchset->patches == NULL)
 					{
-						DPRINTF("Patch '%s' not necessary for %s KIP1\n", currPatchset->name, (const char*)ki->kip1->name);
+						DPRINTF("Patch '%s' not necessary for %s\n", currPatchset->name, (const char*)ki->kip1->name);
 						patchesApplied |= appliedMask;
 
 						continue; // Continue in case it's double defined.
@@ -609,10 +581,10 @@ const char* pkg2_patch_kips(link_t *info, char* patchNames)
 					unsigned char* kipSectData = ki->kip1->data;
 					for (u32 currSectIdx = 0; currSectIdx < KIP1_NUM_SECTIONS; currSectIdx++)
 					{
-						if (bitsAffected & (1u << currSectIdx))
+						if (bitsAffected & BIT(currSectIdx))
 						{
-							gfx_printf("Applying patch '%s' on %s KIP1 sect %d\n", currPatchset->name, (const char*)ki->kip1->name, currSectIdx);
-							for (const kip1_patch_t* currPatch = currPatchset->patches; currPatch != NULL && currPatch->srcData != 0; currPatch++)
+							gfx_printf("Applying '%s' on %s, sect %d\n", currPatchset->name, (const char*)ki->kip1->name, currSectIdx);
+							for (const kip1_patch_t* currPatch = currPatchset->patches; currPatch != NULL && currPatch->srcData != NULL; currPatch++)
 							{
 								if (GET_KIP_PATCH_SECTION(currPatch->offset) != currSectIdx)
 									continue;
@@ -620,7 +592,7 @@ const char* pkg2_patch_kips(link_t *info, char* patchNames)
 								if (!currPatch->length)
 								{
 									gfx_con.mute = false;
-									gfx_printf("%kPatch is empty!%k\n", 0xFFFF0000, 0xFFCCCCCC);
+									gfx_printf("%kPatch empty!%k\n", 0xFFFF0000, 0xFFCCCCCC);
 									return currPatchset->name; // MUST stop here as it's not probably intended.
 								}
 
@@ -630,7 +602,7 @@ const char* pkg2_patch_kips(link_t *info, char* patchNames)
 									(memcmp(&kipSectData[currOffset], currPatch->dstData, currPatch->length) != 0))
 								{
 									gfx_con.mute = false;
-									gfx_printf("%kPatch data mismatch at 0x%x!%k\n", 0xFFFF0000, currOffset, 0xFFCCCCCC);
+									gfx_printf("%kPatch mismatch at 0x%x!%k\n", 0xFFFF0000, currOffset, 0xFFCCCCCC);
 									return currPatchset->name; // MUST stop here as kip is likely corrupt.
 								}
 								else
@@ -648,6 +620,7 @@ const char* pkg2_patch_kips(link_t *info, char* patchNames)
 				}
 				currPatchset++;
 			}
+
 			if (emummc_patch_selected && !strncmp(_kip_id_sets[currKipIdx].name, "FS", sizeof(ki->kip1->name)))
 			{
 				emummc_patch_selected = false;
@@ -657,7 +630,7 @@ const char* pkg2_patch_kips(link_t *info, char* patchNames)
 				if (currKipIdx > 17)
 					emu_cfg.fs_ver -= 2;
 
-				gfx_printf("Injecting emuMMC. FS ver: %d\n", emu_cfg.fs_ver);
+				gfx_printf("Injecting emuMMC. FS ID: %d\n", emu_cfg.fs_ver);
 				if (_kipm_inject("/bootloader/sys/emummc.kipm", "FS", ki))
 					return "emummc";
 			}
@@ -666,43 +639,21 @@ const char* pkg2_patch_kips(link_t *info, char* patchNames)
 
 	for (u32 i = 0; i < numPatches; i++)
 	{
-		if ((patchesApplied & (1u << i)) == 0)
+		if ((patchesApplied & BIT(i)) == 0)
 			return patches[i];
 	}
 
 	return NULL;
 }
 
-static const u8 mkey_vector_8xx[][SE_KEY_128_SIZE] =
-{
-	// Master key 8 encrypted with 9.  (8.1.0 with 9.0.0)
-	{ 0x4D, 0xD9, 0x98, 0x42, 0x45, 0x0D, 0xB1, 0x3C, 0x52, 0x0C, 0x9A, 0x44, 0xBB, 0xAD, 0xAF, 0x80 },
-	// Master key 9 encrypted with 10. (9.0.0 with 9.1.0)
-	{ 0xB8, 0x96, 0x9E, 0x4A, 0x00, 0x0D, 0xD6, 0x28, 0xB3, 0xD1, 0xDB, 0x68, 0x5F, 0xFB, 0xE1, 0x2A }
-};
-
-static bool _pkg2_key_unwrap_validate(pkg2_hdr_t *tmp_test, pkg2_hdr_t *hdr, u8 src_slot, u8 *mkey, const u8 *key_seed)
-{
-	// Decrypt older encrypted mkey.
-	se_aes_crypt_ecb(src_slot, 0, mkey, SE_KEY_128_SIZE, key_seed, SE_KEY_128_SIZE);
-	// Set and unwrap pkg2 key.
-	se_aes_key_clear(9);
-	se_aes_key_set(9, mkey, SE_KEY_128_SIZE);
-	se_aes_unwrap_key(9, 9, package2_keyseed);
-
-	// Decrypt header.
-	se_aes_crypt_ctr(9, tmp_test, sizeof(pkg2_hdr_t), hdr, sizeof(pkg2_hdr_t), hdr);
-
-	// Return if header is valid.
-	return (tmp_test->magic == PKG2_MAGIC);
-}
+// Master key 7 encrypted with 8.  (7.0.0 with 8.1.0). AES-ECB
+static const u8 mkey_vector_7xx[SE_KEY_128_SIZE] =
+	{ 0xEA, 0x60, 0xB3, 0xEA, 0xCE, 0x8F, 0x24, 0x46, 0x7D, 0x33, 0x9C, 0xD1, 0xBC, 0x24, 0x98, 0x29 };
 
 u8 pkg2_keyslot;
-pkg2_hdr_t *pkg2_decrypt(void *data, u8 kb)
+pkg2_hdr_t *pkg2_decrypt(void *data, u8 kb, bool is_exo)
 {
-	pkg2_hdr_t mkey_test;
 	u8 *pdata = (u8 *)data;
-	pkg2_keyslot = 8;
 
 	// Skip signature.
 	pdata += 0x100;
@@ -712,65 +663,31 @@ pkg2_hdr_t *pkg2_decrypt(void *data, u8 kb)
 	// Skip header.
 	pdata += sizeof(pkg2_hdr_t);
 
-	// Check if we need to decrypt with newer mkeys. Valid for sept for 8.1.0 and up.
-	se_aes_crypt_ctr(8, &mkey_test, sizeof(pkg2_hdr_t), hdr, sizeof(pkg2_hdr_t), hdr);
+	// Set pkg2 key slot to default. If 7.0.0 it will change to 9.
+	pkg2_keyslot = 8;
 
-	if (mkey_test.magic == PKG2_MAGIC)
-		goto key_found;
-
-	// Decrypt older pkg2 via new mkeys.
-	if ((kb >= KB_FIRMWARE_VERSION_810) && (kb < KB_FIRMWARE_VERSION_MAX))
+	// Decrypt 7.0.0 pkg2 via 8.1.0 mkey on Erista.
+	if (!h_cfg.t210b01 && kb == KB_FIRMWARE_VERSION_700)
 	{
 		u8 tmp_mkey[SE_KEY_128_SIZE];
-		u8 decr_slot = !h_cfg.t210b01 ? (!h_cfg.aes_slots_new ? 12 : 13) : 7; // Sept mkey or T210B01 mkey.
-		u8 mkey_seeds_cnt = sizeof(mkey_vector_8xx) / SE_KEY_128_SIZE;
-		u8 mkey_seeds_idx = mkey_seeds_cnt; // Real index + 1.
-		u8 mkey_seeds_min_idx = mkey_seeds_cnt - (KB_FIRMWARE_VERSION_MAX - kb);
 
-		while (mkey_seeds_cnt)
-		{
-			// Decrypt and validate mkey.
-			int res = _pkg2_key_unwrap_validate(&mkey_test, hdr, decr_slot,
-				tmp_mkey, mkey_vector_8xx[mkey_seeds_idx - 1]);
+		// Decrypt 7.0.0 encrypted mkey.
+		se_aes_crypt_ecb(!is_exo ? 7 : 13, DECRYPT, tmp_mkey, SE_KEY_128_SIZE, mkey_vector_7xx, SE_KEY_128_SIZE);
 
-			if (res)
-			{
-				pkg2_keyslot = 9;
-				goto key_found;
-			}
-			else
-			{
-				// Set current mkey in order to decrypt a lower mkey.
-				mkey_seeds_idx--;
-				se_aes_key_clear(9);
-				se_aes_key_set(9, tmp_mkey, SE_KEY_128_SIZE);
+		// Set and unwrap pkg2 key.
+		se_aes_key_set(9, tmp_mkey, SE_KEY_128_SIZE);
+		se_aes_unwrap_key(9, 9, package2_keyseed);
 
-				decr_slot = 9; // Temp key.
-
-				// Check if we tried last key for that pkg2 version.
-				// And start with a lower mkey in case sept is older.
-				if (mkey_seeds_idx == mkey_seeds_min_idx)
-				{
-					mkey_seeds_cnt--;
-					mkey_seeds_idx = mkey_seeds_cnt;
-					decr_slot = !h_cfg.aes_slots_new ? 12 : 13; // Sept mkey.
-				}
-
-				// Out of keys. pkg2 is latest or process failed.
-				if (!mkey_seeds_cnt)
-					se_aes_key_clear(9);
-			}
-		}
+		pkg2_keyslot = 9;
 	}
 
-key_found:
 	// Decrypt header.
 	se_aes_crypt_ctr(pkg2_keyslot, hdr, sizeof(pkg2_hdr_t), hdr, sizeof(pkg2_hdr_t), hdr);
-	//gfx_hexdump((u32)hdr, hdr, 0x100);
 
 	if (hdr->magic != PKG2_MAGIC)
 		return NULL;
 
+	// Decrypt sections.
 	for (u32 i = 0; i < 4; i++)
 	{
 DPRINTF("sec %d has size %08X\n", i, hdr->sec_size[i]);
@@ -778,7 +695,6 @@ DPRINTF("sec %d has size %08X\n", i, hdr->sec_size[i]);
 			continue;
 
 		se_aes_crypt_ctr(pkg2_keyslot, pdata, hdr->sec_size[i], pdata, hdr->sec_size[i], &hdr->sec_ctr[i * SE_AES_IV_SIZE]);
-		//gfx_hexdump((u32)pdata, pdata, 0x100);
 
 		pdata += hdr->sec_size[i];
 	}
@@ -790,9 +706,13 @@ static u32 _pkg2_ini1_build(u8 *pdst, pkg2_hdr_t *hdr, link_t *kips_info, bool n
 {
 	u32 ini1_size = sizeof(pkg2_ini1_t);
 	pkg2_ini1_t *ini1 = (pkg2_ini1_t *)pdst;
+
+	// Set initial header and magic.
 	memset(ini1, 0, sizeof(pkg2_ini1_t));
 	ini1->magic = INI1_MAGIC;
 	pdst += sizeof(pkg2_ini1_t);
+
+	// Merge kips into INI1.
 	LIST_FOREACH_ENTRY(pkg2_kip1_info_t, ki, kips_info, link)
 	{
 DPRINTF("adding kip1 '%s' @ %08X (%08X)\n", ki->kip1->name, (u32)ki->kip1, ki->size);
@@ -801,8 +721,12 @@ DPRINTF("adding kip1 '%s' @ %08X (%08X)\n", ki->kip1->name, (u32)ki->kip1, ki->s
 		ini1_size += ki->size;
 		ini1->num_procs++;
 	}
+
+	// Align size and set it.
 	ini1_size = ALIGN(ini1_size, 4);
 	ini1->size = ini1_size;
+
+	// Encrypt INI1 in its own section if old pkg2. Otherwise it gets embedded into Kernel.
 	if (!new_pkg2)
 	{
 		hdr->sec_size[PKG2_SEC_INI1] = ini1_size;
@@ -818,16 +742,25 @@ DPRINTF("adding kip1 '%s' @ %08X (%08X)\n", ki->kip1->name, (u32)ki->kip1, ki->s
 	return ini1_size;
 }
 
-void pkg2_build_encrypt(void *dst, void *hos_ctxt, link_t *kips_info)
+void pkg2_build_encrypt(void *dst, void *hos_ctxt, link_t *kips_info, bool is_exo)
 {
 	u8 *pdst = (u8 *)dst;
 	launch_ctxt_t * ctxt = (launch_ctxt_t *)hos_ctxt;
 	u32 kernel_size = ctxt->kernel_size;
 	bool is_meso = *(u32 *)(ctxt->kernel + 4) == ATM_MESOSPHERE;
+	u8 kb = ctxt->pkg1_id->kb;
 
 	// Force new Package2 if Mesosphere.
 	if (is_meso)
 		ctxt->new_pkg2 = true;
+
+	// Set key version. For Erista 7.0.0, use 8.1.0 because of a bug in Exo2?
+	u8 key_ver = kb ? kb + 1 : 0;
+	if (pkg2_keyslot == 9)
+	{
+		key_ver = KB_FIRMWARE_VERSION_810 + 1;
+		pkg2_keyslot = 8;
+	}
 
 	// Signature.
 	memset(pdst, 0, 0x100);
@@ -868,29 +801,28 @@ DPRINTF("%s @ %08X (%08X)\n", is_meso ? "Mesosphere": "kernel",(u32)ctxt->kernel
 	pdst += kernel_size;
 DPRINTF("kernel encrypted\n");
 
-	/// Build INI1 for old Package2.
+	// Build INI1 for old Package2.
 	u32 ini1_size = 0;
 	if (!ctxt->new_pkg2)
 		ini1_size = _pkg2_ini1_build(pdst, hdr, kips_info, false);
 DPRINTF("INI1 encrypted\n");
 
-	// Calculate SHA256 over encrypted Kernel and INI1.
-	u8 *pk2_hash_data = (u8 *)dst + 0x100 + sizeof(pkg2_hdr_t);
-	se_calc_sha256_oneshot(&hdr->sec_sha256[0x20 * PKG2_SEC_KERNEL],
-		(void *)pk2_hash_data, hdr->sec_size[PKG2_SEC_KERNEL]);
-	pk2_hash_data += hdr->sec_size[PKG2_SEC_KERNEL];
-	se_calc_sha256_oneshot(&hdr->sec_sha256[0x20 * PKG2_SEC_INI1],
-		(void *)pk2_hash_data, hdr->sec_size[PKG2_SEC_INI1]);
+	if (!is_exo) // Not needed on Exosphere 1.0.0 and up.
+	{
+		// Calculate SHA256 over encrypted Kernel and INI1.
+		u8 *pk2_hash_data = (u8 *)dst + 0x100 + sizeof(pkg2_hdr_t);
+		se_calc_sha256_oneshot(&hdr->sec_sha256[SE_SHA_256_SIZE * PKG2_SEC_KERNEL],
+			(void *)pk2_hash_data, hdr->sec_size[PKG2_SEC_KERNEL]);
+		pk2_hash_data += hdr->sec_size[PKG2_SEC_KERNEL];
+		se_calc_sha256_oneshot(&hdr->sec_sha256[SE_SHA_256_SIZE * PKG2_SEC_INI1],
+			(void *)pk2_hash_data, hdr->sec_size[PKG2_SEC_INI1]);
+	}
 
-	//Encrypt header.
-	u8 key_ver = ctxt->pkg1_id->kb ? ctxt->pkg1_id->kb + 1 : 0;
+	// Encrypt header.
 	*(u32 *)hdr->ctr = 0x100 + sizeof(pkg2_hdr_t) + kernel_size + ini1_size;
 	hdr->ctr[4] = key_ver;
 	se_aes_crypt_ctr(pkg2_keyslot, hdr, sizeof(pkg2_hdr_t), hdr, sizeof(pkg2_hdr_t), hdr);
 	memset(hdr->ctr, 0 , SE_AES_IV_SIZE);
 	*(u32 *)hdr->ctr = 0x100 + sizeof(pkg2_hdr_t) + kernel_size + ini1_size;
 	hdr->ctr[4] = key_ver;
-
-	if (pkg2_keyslot != 8)
-		se_aes_key_clear(9);
 }

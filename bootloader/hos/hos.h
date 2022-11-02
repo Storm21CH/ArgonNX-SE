@@ -18,37 +18,41 @@
 #ifndef _HOS_H_
 #define _HOS_H_
 
+#include <bdk.h>
+
 #include "pkg1.h"
 #include "pkg2.h"
-#include <sec/se_t210.h>
-#include <utils/types.h>
-#include <utils/ini.h>
-#include <sec/tsec.h>
 
 #include <assert.h>
 
-#define KB_FIRMWARE_VERSION_100_200 0
-#define KB_FIRMWARE_VERSION_300 1
-#define KB_FIRMWARE_VERSION_301 2
-#define KB_FIRMWARE_VERSION_400 3
-#define KB_FIRMWARE_VERSION_500 4
-#define KB_FIRMWARE_VERSION_600 5
-#define KB_FIRMWARE_VERSION_620 6
-#define KB_FIRMWARE_VERSION_700 7
-#define KB_FIRMWARE_VERSION_810 8
-#define KB_FIRMWARE_VERSION_900 9
-#define KB_FIRMWARE_VERSION_910 10
-#define KB_FIRMWARE_VERSION_MAX KB_FIRMWARE_VERSION_910
+#define KB_FIRMWARE_VERSION_100  0
+#define KB_FIRMWARE_VERSION_300  1
+#define KB_FIRMWARE_VERSION_301  2
+#define KB_FIRMWARE_VERSION_400  3
+#define KB_FIRMWARE_VERSION_500  4
+#define KB_FIRMWARE_VERSION_600  5
+#define KB_FIRMWARE_VERSION_620  6
+#define KB_FIRMWARE_VERSION_700  7
+#define KB_FIRMWARE_VERSION_810  8
+#define KB_FIRMWARE_VERSION_900  9
+#define KB_FIRMWARE_VERSION_910  10
+#define KB_FIRMWARE_VERSION_1210 11
+#define KB_FIRMWARE_VERSION_1300 12
+#define KB_FIRMWARE_VERSION_1400 13
+#define KB_FIRMWARE_VERSION_MAX  KB_FIRMWARE_VERSION_1400 //!TODO: Update on mkey changes.
 
-#define HOS_PKG11_MAGIC 0x31314B50
-#define HOS_EKS_MAGIC   0x30534B45
+#define HOS_TSEC_VERSION 4 //! TODO: Update on TSEC Root Key changes.
 
-// Use official Mariko secmon when in stock.
+#define HOS_PKG11_MAGIC  0x31314B50
+#define HOS_EKS_MAGIC    0x31534B45 // EKS1.
+#define HOS_EKS_TSEC_VER (KB_FIRMWARE_VERSION_700 + HOS_TSEC_VERSION)
+
+// Use official Mariko secmon when in stock. Needs access to TZRAM.
 //#define HOS_MARIKO_STOCK_SECMON
 
 typedef struct _exo_ctxt_t
 {
-	bool fs_is_510;
+	u32  hos_revision;
 	bool no_user_exceptions;
 	bool user_pmu;
 	bool *usb3_force;
@@ -56,32 +60,18 @@ typedef struct _exo_ctxt_t
 	bool *cal0_allow_writes_sys;
 } exo_ctxt_t;
 
-typedef struct _hos_eks_keys_t
-{
-	u8 mkk[SE_KEY_128_SIZE];
-	u8 fdk[SE_KEY_128_SIZE];
-} hos_eks_keys_t;
-
-typedef struct _hos_eks_bis_keys_t
-{
-	u8 crypt[SE_KEY_128_SIZE];
-	u8 tweak[SE_KEY_128_SIZE];
-} hos_eks_bis_keys_t;
-
 typedef struct _hos_eks_mbr_t
 {
 	u32 magic;
-	u8  enabled[5];
-	u8  enabled_bis;
-	u8  rsvd[2];
+	u32 enabled;
 	u32 lot0;
-	u8  dkg[SE_KEY_128_SIZE];
-	u8  dkk[SE_KEY_128_SIZE];
-	hos_eks_keys_t keys[5];
-	hos_eks_bis_keys_t bis_keys[3];
+	u32 rsvd;
+	u8  tsec[SE_KEY_128_SIZE];
+	u8  troot[SE_KEY_128_SIZE];
+	u8  troot_dev[SE_KEY_128_SIZE];
 } hos_eks_mbr_t;
 
-static_assert(sizeof(hos_eks_mbr_t) == 304, "HOS EKS size is wrong!");
+static_assert(sizeof(hos_eks_mbr_t) == 64, "HOS EKS size is wrong!");
 
 typedef struct _launch_ctxt_t
 {
@@ -115,7 +105,6 @@ typedef struct _launch_ctxt_t
 
 	char *fss0_main_path;
 	u32   fss0_hosver;
-	bool  fss0_experimental;
 	bool  atmosphere;
 
 	exo_ctxt_t exo_ctx;
@@ -129,10 +118,8 @@ typedef struct _merge_kip_t
 	link_t link;
 } merge_kip_t;
 
-void hos_eks_get();
-void hos_eks_save(u32 kb);
 void hos_eks_clear(u32 kb);
 int  hos_launch(ini_sec_t *cfg);
-int  hos_keygen(void *keyblob, u32 kb, tsec_ctxt_t *tsec_ctxt, launch_ctxt_t *hos_ctxt);
+int  hos_keygen(void *keyblob, u32 kb, tsec_ctxt_t *tsec_ctxt, bool stock, bool is_exo);
 
 #endif

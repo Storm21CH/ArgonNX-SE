@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020 CTCaer
+ * Copyright (c) 2018-2022 CTCaer
  * Copyright (c) 2019 Atmosphère-NX
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -18,20 +18,12 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <bdk.h>
+
 #include "hos.h"
 #include "../config.h"
-#include <display/di.h>
-#include <gfx_utils.h>
 #include <libs/fatfs/ff.h>
-#include <mem/heap.h>
-#include <soc/fuse.h>
 #include "../storage/emummc.h"
-#include "../storage/nx_emmc.h"
-#include <storage/nx_sd.h>
-#include <storage/sdmmc.h>
-#include <utils/btn.h>
-#include <utils/util.h>
-#include <utils/types.h>
 
 extern hekate_config h_cfg;
 
@@ -131,7 +123,7 @@ typedef struct _atm_fatal_error_ctx
 #define  ATM_FATAL_MAGIC       0x30454641 // AFE0
 
 #define ATM_EXO_FATAL_ADDR     0x80020000
-#define  ATM_EXO_FATAL_SIZE    0x20000
+#define  ATM_EXO_FATAL_SIZE    SZ_128K
 
 #define ATM_WB_HEADER_OFF      0x244
 #define  ATM_WB_MAGIC          0x30544257 // WBT0
@@ -149,9 +141,9 @@ typedef struct _atm_fatal_error_ctx
 
 #define EXO_FW_VER(mj, mn, rv) (((mj) << 24) | ((mn) << 16) | ((rv) << 8))
 
-void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
+void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base)
 {
-	u32 exo_fw_no = 0;
+	u32 exo_fw_no;
 	u32 exo_flags = 0;
 	bool usb3_force = false;
 	bool user_debug = false;
@@ -162,52 +154,50 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
 
 	volatile exo_cfg_t *exo_cfg = (exo_cfg_t *)EXO_CFG_ADDR;
 
-	// Old exosphere target versioning. Use fuses for a simpler encoding.
+	//! TODO: Replace current HOS version decoding (as it's bound to break in the future).
+
+	// Old exosphere target versioning. Use fuses for a simpler decoding.
 	if (ctxt->pkg1_id->fuses <= 3 || ctxt->pkg1_id->fuses >= 10) // 1.0.0 - 3.0.0, 8.1.0+.
 		exo_fw_no = ctxt->pkg1_id->fuses;
 	else
-		exo_fw_no = ctxt->pkg1_id->fuses - 1;                    // 3.0.1 - 7.0.1, 8.0.0 - 8.0.1.
+		exo_fw_no = ctxt->pkg1_id->fuses - 1;                    // 3.0.1 - 7.0.1, 8.0.x.
 
-	if (!memcmp(ctxt->pkg1_id->id, "20190314172056", 8))         // 8.0.0 - 8.0.1.
-		exo_fw_no++;
-
-	if (!memcmp(ctxt->pkg1_id->id, "20210129111626", 8))         // 12.0.0.
+	// Handle versions that change API and do not burn new fuse.
+	if (!memcmp(ctxt->pkg1_id->id, "20190314172056", 8) || //  8.0.x, same fuses with  7.0.1.
+		!memcmp(ctxt->pkg1_id->id, "20210129111626", 8) || // 12.0.0, same fuses with 11.0.0.
+		!memcmp(ctxt->pkg1_id->id, "20210805123730", 8) || // 13.0.0, same fuses with 12.1.0.
+		!memcmp(ctxt->pkg1_id->id, "20220209100018", 8)    // 14.0.0, same fuses with 13.2.1.
+	   )
 		exo_fw_no++;
 
 	// Feed old exosphere target versioning to new.
-	if (exo_new)
+	switch (exo_fw_no)
 	{
-		switch (exo_fw_no)
-		{
-		case 1 ... 4:
-		case 6:
-			exo_fw_no = EXO_FW_VER(exo_fw_no, 0, 0);
-			break;
-		case 5:
-			if (!ctxt->exo_ctx.fs_is_510)
-				exo_fw_no = EXO_FW_VER(5, 0, 0);
-			else
-				exo_fw_no = EXO_FW_VER(5, 1, 0);
-			break;
-		case 7:
-			exo_fw_no = EXO_FW_VER(6, 2, 0);
-			break;
-		case 8 ... 9:
-			exo_fw_no = EXO_FW_VER(exo_fw_no - 1, 0, 0);
-			break;
-		case 10:
-			exo_fw_no = EXO_FW_VER(8, 1, 0);
-			break;
-		case 11:
-			exo_fw_no = EXO_FW_VER(9, 0, 0);
-			break;
-		case 12:
-			exo_fw_no = EXO_FW_VER(9, 1, 0);
-			break;
-		case 13 ... 15:
-			exo_fw_no = EXO_FW_VER(exo_fw_no - 3, 0, 0);
-			break;
-		}
+	case 1 ... 4:
+	case 6:
+		exo_fw_no = EXO_FW_VER(exo_fw_no, 0, 0);
+		break;
+	case 5:
+		exo_fw_no = EXO_FW_VER(5, ctxt->exo_ctx.hos_revision, 0);
+		break;
+	case 7:
+		exo_fw_no = EXO_FW_VER(6, 2, 0);
+		break;
+	case 8 ... 9:
+		exo_fw_no = EXO_FW_VER(exo_fw_no - 1, 0, 0);
+		break;
+	case 10:
+		exo_fw_no = EXO_FW_VER(8, 1, 0);
+		break;
+	case 11:
+		exo_fw_no = EXO_FW_VER(9, 0, 0);
+		break;
+	case 12:
+		exo_fw_no = EXO_FW_VER(9, 1, 0);
+		break;
+	case 13 ... 17: //!TODO: Update on API changes. 17: 14.0.0.
+		exo_fw_no = EXO_FW_VER(exo_fw_no - 3, ctxt->exo_ctx.hos_revision, 0);
+		break;
 	}
 
 	// Parse exosphere.ini.
@@ -252,11 +242,11 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
 		// Parse usb mtim settings. Avoid parsing if it's overridden.
 		if (ctxt->fss0_main_path && !ctxt->exo_ctx.usb3_force)
 		{
-			char set_path[256];
-			strcpy(set_path, ctxt->fss0_main_path);
-			strcat(set_path, "config/system_settings.ini");
+			char settings_path[256];
+			strcpy(settings_path, ctxt->fss0_main_path);
+			strcat(settings_path, "config/system_settings.ini");
 			LIST_INIT(sys_settings);
-			if (ini_parse(&ini_sections, set_path, false))
+			if (ini_parse(&ini_sections, settings_path, false))
 			{
 				LIST_FOREACH_ENTRY(ini_sec_t, ini_sec, &ini_sections, link)
 				{
@@ -322,33 +312,7 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base, bool exo_new)
 		wb_cfg->fwno = exo_fw_no;
 
 		// Set warmboot binary rsa modulus.
-		u8 *rsa_mod = (u8 *)malloc(512);
-
-		sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_BOOT0);
-
-		u32 sector;
-		u8  mod0, mod1;
-
-		// Get the correct RSA modulus byte masks.
-		nx_emmc_get_autorcm_masks(&mod0, &mod1);
-
-		// Iterate BCTs.
-		for (u32 i = 0; i < 4; i++)
-		{
-			sector = 1 + (32 * i); // 0x4000 bct + 0x200 offset.
-			sdmmc_storage_read(&emmc_storage, sector, 1, rsa_mod);
-
-			// Check if 2nd byte of modulus is correct.
-			if (rsa_mod[0x11] != mod1)
-				continue;
-
-			// Patch AutoRCM out.
-			rsa_mod[0x10] = mod0;
-
-			break;
-		}
-
-		memcpy((void *)(warmboot_base + 0x10), rsa_mod + 0x10, 0x100);
+		pkg1_warmboot_rsa_mod(warmboot_base);
 	}
 
 	if (emu_cfg.enabled && !h_cfg.emummc_force_disable)
@@ -422,6 +386,8 @@ static const char *get_error_desc(u32 error_desc)
 	}
 }
 
+#define HOS_PID_BOOT2 0x8
+
 void secmon_exo_check_panic()
 {
 	volatile atm_fatal_error_ctx *rpt = (atm_fatal_error_ctx *)ATM_FATAL_ERR_CTX_ADDR;
@@ -436,6 +402,10 @@ void secmon_exo_check_panic()
 	WPRINTF("Panic occurred while running Atmosphere.\n\n");
 	WPRINTFARGS("Title ID: %08X%08X", (u32)((u64)rpt->title_id >> 32), (u32)rpt->title_id);
 	WPRINTFARGS("Error:    %s (0x%x)\n", get_error_desc(rpt->error_desc), rpt->error_desc);
+
+	// Check if mixed atmosphere sysmodules.
+	if ((u32)rpt->title_id == HOS_PID_BOOT2)
+		WPRINTF("Mismatched Atmosphere files?\n");
 
 	// Save context to the SD card.
 	char filepath[0x40];

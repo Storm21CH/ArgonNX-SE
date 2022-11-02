@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018 CTCaer
+ * Copyright (c) 2018-2021 CTCaer
  * Copyright (c) 2018 balika011
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -23,7 +23,6 @@ void print_fuseinfo();
 void print_kfuseinfo();
 void print_mmc_info();
 void print_sdcard_info();
-void print_tsec_key();
 void print_fuel_gauge_info();
 void print_battery_charger_info();
 void print_battery_info();

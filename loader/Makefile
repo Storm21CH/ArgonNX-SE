@@ -8,7 +8,6 @@ include $(DEVKITARM)/base_rules
 
 LDR_LOAD_ADDR := 0x40007000
 IPL_MAGIC := 0x43544349 #"ICTC"
-#include ../Versions.inc
 
 ################################################################################
 

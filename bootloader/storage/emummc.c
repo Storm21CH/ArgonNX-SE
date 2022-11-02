@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2021 CTCaer
+ * Copyright (c) 2019-2022 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -17,17 +17,11 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <bdk.h>
+
 #include "emummc.h"
-#include <storage/sdmmc.h>
 #include "../config.h"
-#include <utils/ini.h>
-#include <gfx_utils.h>
 #include <libs/fatfs/ff.h>
-#include <mem/heap.h>
-#include "../storage/nx_emmc.h"
-#include <storage/nx_sd.h>
-#include <utils/list.h>
-#include <utils/types.h>
 
 extern hekate_config h_cfg;
 emummc_cfg_t emu_cfg = { 0 };
@@ -42,9 +36,9 @@ void emummc_load_cfg()
 	emu_cfg.active_part = 0;
 	emu_cfg.fs_ver = 0;
 	if (!emu_cfg.nintendo_path)
-		emu_cfg.nintendo_path = (char *)malloc(0x80);
+		emu_cfg.nintendo_path = (char *)malloc(0x200);
 	if (!emu_cfg.emummc_file_based_path)
-		emu_cfg.emummc_file_based_path = (char *)malloc(0x80);
+		emu_cfg.emummc_file_based_path = (char *)malloc(0x200);
 
 	emu_cfg.nintendo_path[0] = 0;
 	emu_cfg.emummc_file_based_path[0] = 0;
@@ -109,7 +103,14 @@ bool emummc_set_path(char *path)
 	if (found)
 	{
 		emu_cfg.enabled = 1;
-		emu_cfg.id = 0;
+
+		// Get ID from path.
+		u32 id_from_path = 0;
+		u32 path_size = strlen(path);
+		if (path_size >= 4)
+			memcpy(&id_from_path, path + path_size - 4, 4);
+		emu_cfg.id = id_from_path;
+
 		strcpy(emu_cfg.nintendo_path, path);
 		strcat(emu_cfg.nintendo_path, "/Nintendo");
 	}
@@ -137,7 +138,7 @@ int emummc_storage_init_mmc()
 	emu_cfg.active_part = 0;
 
 	// Always init eMMC even when in emuMMC. eMMC is needed from the emuMMC driver anyway.
-	if (!sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
+	if (!emmc_initialize(false))
 		return 2;
 
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)

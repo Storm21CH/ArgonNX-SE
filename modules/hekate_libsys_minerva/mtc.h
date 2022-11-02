@@ -2,7 +2,7 @@
  * Minerva Training Cell
  * DRAM Training for Tegra X1 SoC. Supports DDR2/3 and LPDDR3/4.
  *
- * Copyright (c) 2018 CTCaer  <ctcaer@gmail.com>
+ * Copyright (c) 2018-2022 CTCaer  <ctcaer@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -51,10 +51,31 @@
 #define EMC_PERIODIC_TRAIN_MS     100
 #define EMC_TEMP_COMP_MS          1000
 
+/* Training types */
+#define NEEDS_TRAINING_CA              BIT(0)
+#define NEEDS_TRAINING_CA_VREF         BIT(1)
+#define NEEDS_TRAINING_QUSE            BIT(2)
+#define NEEDS_TRAINING_QUSE_VREF       BIT(3)
+#define NEEDS_TRAINING_WR              BIT(4)
+#define NEEDS_TRAINING_WR_VREF         BIT(5)
+#define NEEDS_TRAINING_RD              BIT(6)
+#define NEEDS_TRAINING_RD_VREF         BIT(7)
+#define NEEDS_TRAINING_SWAP_RANK       BIT(8)
+#define NEEDS_TRAINING_IN_SELF_REFRESH BIT(9)
+
+#define NEEDS_TRISTATE_TRAINING   (NEEDS_TRAINING_CA | NEEDS_TRAINING_CA_VREF | \
+								   NEEDS_TRAINING_QUSE | NEEDS_TRAINING_WR |    \
+								   NEEDS_TRAINING_WR_VREF | NEEDS_TRAINING_RD | \
+								   NEEDS_TRAINING_RD_VREF)
+#define NEEDS_TRAINING_CA_COMBO   (NEEDS_TRAINING_CA | NEEDS_TRAINING_CA_VREF)
+#define NEEDS_TRAINING_QUSE_COMBO (NEEDS_TRAINING_QUSE | NEEDS_TRAINING_QUSE_VREF)
+#define NEEDS_TRAINING_WR_COMBO   (NEEDS_TRAINING_WR | NEEDS_TRAINING_WR_VREF)
+#define NEEDS_TRAINING_RD_COMBO   (NEEDS_TRAINING_RD | NEEDS_TRAINING_RD_VREF)
+
 typedef struct
 {
-	s32 rate_to;
-	s32 rate_from;
+	u32 rate_to;
+	u32 rate_from;
 	emc_table_t *mtc_table;
 	u32 table_entries;
 	emc_table_t *current_emc_table;

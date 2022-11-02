@@ -1,7 +1,7 @@
 /*
- * Atmosphère Fusée Secondary Storage parser.
+ * Atmosphère Fusée Secondary Storage (Package3) parser.
  *
- * Copyright (c) 2019-2020 CTCaer
+ * Copyright (c) 2019-2021 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -18,15 +18,15 @@
 
 #include <string.h>
 
+#include <bdk.h>
+
 #include "fss.h"
 #include "hos.h"
 #include "../config.h"
 #include <libs/fatfs/ff.h>
-#include <mem/heap.h>
 #include "../storage/emummc.h"
-#include <storage/nx_sd.h>
 
-#include <gfx_utils.h>
+//#define DPRINTF(...) gfx_printf(__VA_ARGS__)
 #define DPRINTF(...)
 
 extern hekate_config h_cfg;
@@ -51,6 +51,7 @@ extern bool is_ipl_updated(void *buf, char *path, bool force);
 #define CNT_TYPE_KLD 9  // Kernel Loader.
 #define CNT_TYPE_KRN 10 // Kernel.
 #define CNT_TYPE_EXF 11 // Exosphere Mariko fatal payload.
+#define CNT_TYPE_TKG 12 // Tsec Keygen.
 
 // FSS0 Content Flags.
 #define CNT_FLAG0_EXPERIMENTAL BIT(0)
@@ -81,9 +82,9 @@ typedef struct _fss_content_t
 	char name[0x10];
 } fss_content_t;
 
-static void _update_r2p(launch_ctxt_t *ctxt, const char *path)
+static void _set_fss_path_and_update_r2p(launch_ctxt_t *ctxt, const char *path)
 {
-	char *r2p_path = malloc(512);
+	char *r2p_path = malloc(256);
 	u32 path_len = strlen(path);
 
 	strcpy(r2p_path, path);
@@ -100,15 +101,10 @@ static void _update_r2p(launch_ctxt_t *ctxt, const char *path)
 
 			free(r2p_payload);
 
-			// Save fss0 parrent path.
-			if (ctxt)
-			{
-				r2p_path[path_len] = 0;
-				ctxt->fss0_main_path = r2p_path;
-				return;
-			}
-
-			break;
+			// Save FSS0 parent path.
+			r2p_path[path_len] = 0;
+			ctxt->fss0_main_path = r2p_path;
+			return;
 		}
 		path_len--;
 	}
@@ -116,40 +112,43 @@ static void _update_r2p(launch_ctxt_t *ctxt, const char *path)
 	free(r2p_path);
 }
 
-int parse_fss(launch_ctxt_t *ctxt, const char *path, fss0_sept_t *sept_ctxt)
+int parse_fss(launch_ctxt_t *ctxt, const char *path)
 {
 	FIL fp;
 
 	bool stock = false;
-	int sept_used = 0;
+	bool experimental = false;
 
 	// Skip if stock and Exosphere and warmboot are not needed.
-	if (!sept_ctxt)
+	bool pkg1_old = ctxt->pkg1_id->kb <= KB_FIRMWARE_VERSION_620; // Should check if t210b01?
+	bool emummc_disabled = !emu_cfg.enabled || h_cfg.emummc_force_disable;
+
+	LIST_FOREACH_ENTRY(ini_kv_t, kv, &ctxt->cfg->kvs, link)
 	{
-		bool pkg1_old = ctxt->pkg1_id->kb <= KB_FIRMWARE_VERSION_620;
-		bool emummc_disabled = !emu_cfg.enabled || h_cfg.emummc_force_disable;
+		if (!strcmp("stock", kv->key))
+			if (kv->val[0] == '1')
+				stock = true;
 
-		LIST_FOREACH_ENTRY(ini_kv_t, kv, &ctxt->cfg->kvs, link)
-		{
-			if (!strcmp("stock", kv->key))
-				if (kv->val[0] == '1')
-					stock = true;
-		}
-
-#ifdef HOS_MARIKO_STOCK_SECMON
-		if (stock && emummc_disabled && (pkg1_old || h_cfg.t210b01))
-#else
-		if (stock && emummc_disabled && pkg1_old)
-#endif
-			return 1;
+		if (!strcmp("fss0experimental", kv->key))
+			if (kv->val[0] == '1')
+				experimental = true;
 	}
 
+#ifdef HOS_MARIKO_STOCK_SECMON
+	if (stock && emummc_disabled && (pkg1_old || h_cfg.t210b01))
+		return 1;
+#else
+	if (stock && emummc_disabled && pkg1_old)
+		return 1;
+#endif
+
+	// Try to open FSS0.
 	if (f_open(&fp, path, FA_READ) != FR_OK)
 		return 0;
 
 	void *fss = malloc(f_size(&fp));
 
-	// Read first 1024 bytes of the fss file.
+	// Read first 1024 bytes of the FSS0 file.
 	f_read(&fp, fss, 1024, NULL);
 
 	// Get FSS0 Meta header offset.
@@ -159,30 +158,14 @@ int parse_fss(launch_ctxt_t *ctxt, const char *path, fss0_sept_t *sept_ctxt)
 	// Check if valid FSS0 and parse it.
 	if (fss_meta->magic == FSS0_MAGIC)
 	{
-		bool mariko_not_supported = false;
-		if (h_cfg.t210b01 && (fss_meta->version < FSS0_VERSION_0_17_0))
-		{
-			gfx_con.mute = false;
-			mariko_not_supported = true;
-		}
-
-		gfx_printf("Found FSS0, Atmosphere %d.%d.%d-%08x\n"
-			"Max HOS supported: %d.%d.%d\n"
-			"Unpacking and loading components..  ",
+		gfx_printf("Found FSS/PK3, Atmosphere %d.%d.%d-%08x\n"
+			"Max HOS: %d.%d.%d\n"
+			"Unpacking..  ",
 			fss_meta->version >> 24, (fss_meta->version >> 16) & 0xFF, (fss_meta->version >> 8) & 0xFF, fss_meta->git_rev,
 			fss_meta->hos_ver >> 24, (fss_meta->hos_ver >> 16) & 0xFF, (fss_meta->hos_ver >> 8) & 0xFF);
 
-		if (mariko_not_supported)
-		{
-			EPRINTF("\nMariko not supported on < 0.17.0!");
-			goto fail;
-		}
-
-		if (!sept_ctxt)
-		{
-			ctxt->atmosphere = true;
-			ctxt->fss0_hosver = fss_meta->hos_ver;
-		}
+		ctxt->atmosphere = true;
+		ctxt->fss0_hosver = fss_meta->hos_ver;
 
 		// Parse FSS0 contents.
 		fss_content_t *curr_fss_cnt = (fss_content_t *)(fss + fss_meta->cnt_off);
@@ -195,104 +178,66 @@ int parse_fss(launch_ctxt_t *ctxt, const char *path, fss0_sept_t *sept_ctxt)
 			if ((curr_fss_cnt[i].offset + curr_fss_cnt[i].size) > fss_meta->size)
 				continue;
 
-			// If content is experimental and experimental flag is not enabled, skip it.
-			if ((curr_fss_cnt[i].flags0 & CNT_FLAG0_EXPERIMENTAL) && !ctxt->fss0_experimental)
+			// If content is experimental and experimental config is not enabled, skip it.
+			if ((curr_fss_cnt[i].flags0 & CNT_FLAG0_EXPERIMENTAL) && !experimental)
 				continue;
 
-			// Parse content.
-			if (!sept_ctxt)
+			// Prepare content.
+			switch (curr_fss_cnt[i].type)
 			{
-				// Prepare content context.
-				switch (curr_fss_cnt[i].type)
-				{
-				case CNT_TYPE_KIP:
-					if (stock)
-						continue;
-					merge_kip_t *mkip1 = (merge_kip_t *)malloc(sizeof(merge_kip_t));
-					mkip1->kip1 = content;
-					list_append(&ctxt->kip1_list, &mkip1->link);
-					DPRINTF("Loaded %s.kip1 from FSS0 (size %08X)\n", curr_fss_cnt[i].name, curr_fss_cnt[i].size);
-					break;
-
-				case CNT_TYPE_KRN:
-					if (stock)
-						continue;
-					ctxt->kernel_size = curr_fss_cnt[i].size;
-					ctxt->kernel = content;
-					break;
-
-				case CNT_TYPE_EXO:
-					ctxt->secmon_size = curr_fss_cnt[i].size;
-					ctxt->secmon = content;
-					break;
-
-				case CNT_TYPE_EXF:
-					ctxt->exofatal_size = curr_fss_cnt[i].size;
-					ctxt->exofatal = content;
-					break;
-
-				case CNT_TYPE_WBT:
-					if (h_cfg.t210b01)
-						continue;
-					ctxt->warmboot_size = curr_fss_cnt[i].size;
-					ctxt->warmboot = content;
-					break;
-
-				default:
+			case CNT_TYPE_KIP:
+				if (stock)
 					continue;
-				}
+				merge_kip_t *mkip1 = (merge_kip_t *)malloc(sizeof(merge_kip_t));
+				mkip1->kip1 = content;
+				list_append(&ctxt->kip1_list, &mkip1->link);
+				DPRINTF("Loaded %s.kip1 from FSS0 (size %08X)\n", curr_fss_cnt[i].name, curr_fss_cnt[i].size);
+				break;
 
-				// Load content to launch context.
-				f_lseek(&fp, curr_fss_cnt[i].offset);
-				f_read(&fp, content, curr_fss_cnt[i].size, NULL);
+			case CNT_TYPE_KRN:
+				if (stock)
+					continue;
+				ctxt->kernel_size = curr_fss_cnt[i].size;
+				ctxt->kernel = content;
+				break;
+
+			case CNT_TYPE_EXO:
+				ctxt->secmon_size = curr_fss_cnt[i].size;
+				ctxt->secmon = content;
+				break;
+
+			case CNT_TYPE_EXF:
+				ctxt->exofatal_size = curr_fss_cnt[i].size;
+				ctxt->exofatal = content;
+				break;
+
+			case CNT_TYPE_WBT:
+				if (h_cfg.t210b01)
+					continue;
+				ctxt->warmboot_size = curr_fss_cnt[i].size;
+				ctxt->warmboot = content;
+				break;
+
+			default:
+				continue;
 			}
-			else
-			{
-				// Load sept content directly to launch context.
-				switch (curr_fss_cnt[i].type)
-				{
-				case CNT_TYPE_SP1:
-					f_lseek(&fp, curr_fss_cnt[i].offset);
-					f_read(&fp, sept_ctxt->sept_primary, curr_fss_cnt[i].size, NULL);
-					break;
-				case CNT_TYPE_SP2:
-					if (!memcmp(curr_fss_cnt[i].name, (sept_ctxt->kb < KB_FIRMWARE_VERSION_810) ? "septsecondary00" : "septsecondary01", 15))
-					{
-						f_lseek(&fp, curr_fss_cnt[i].offset);
-						f_read(&fp, sept_ctxt->sept_secondary, curr_fss_cnt[i].size, NULL);
-						sept_used = 1;
-						goto out;
-					}
-					break;
-				default:
-					break;
-				}
-			}
+
+			// Load content to launch context.
+			f_lseek(&fp, curr_fss_cnt[i].offset);
+			f_read(&fp, content, curr_fss_cnt[i].size, NULL);
 		}
 
-out:
 		gfx_printf("Done!\n");
 		f_close(&fp);
 
-		_update_r2p(ctxt, path);
+		// Set FSS0 path and update r2p if needed.
+		_set_fss_path_and_update_r2p(ctxt, path);
 
-		return (!sept_ctxt ? 1 : sept_used);
+		return 1;
 	}
 
-fail:
 	f_close(&fp);
 	free(fss);
-
-	return 0;
-}
-
-int load_sept_from_ffs0(fss0_sept_t *sept_ctxt)
-{
-	LIST_FOREACH_ENTRY(ini_kv_t, kv, &sept_ctxt->cfg_sec->kvs, link)
-	{
-		if (!strcmp("fss0", kv->key))
-			return parse_fss(NULL, kv->val, sept_ctxt);
-	}
 
 	return 0;
 }

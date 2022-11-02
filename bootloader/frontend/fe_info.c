@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018-2021 CTCaer
+ * Copyright (c) 2018-2022 CTCaer
  * Copyright (c) 2018 balika011
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -18,28 +18,15 @@
 
 #include <string.h>
 
+#include <bdk.h>
+
 #include "fe_info.h"
-#include <gfx_utils.h>
+#include "../config.h"
 #include "../hos/hos.h"
 #include "../hos/pkg1.h"
 #include <libs/fatfs/ff.h>
-#include <mem/heap.h>
-#include <mem/smmu.h>
-#include <power/bq24193.h>
-#include <power/max17050.h>
-#include <sec/se_t210.h>
-#include <sec/tsec.h>
-#include <soc/fuse.h>
-#include <soc/i2c.h>
-#include <soc/kfuse.h>
-#include <soc/t210.h>
-#include <storage/mmc.h>
-#include "../storage/nx_emmc.h"
-#include <storage/nx_sd.h>
-#include <storage/sdmmc.h>
-#include <utils/btn.h>
-#include <utils/util.h>
 
+extern hekate_config h_cfg;
 extern void emmcsn_path_impl(char *path, char *sub_dir, char *filename, sdmmc_storage_t *storage);
 
 #pragma GCC push_options
@@ -47,6 +34,10 @@ extern void emmcsn_path_impl(char *path, char *sub_dir, char *filename, sdmmc_st
 
 void print_fuseinfo()
 {
+	u32 fuse_size = h_cfg.t210b01 ? 0x368 : 0x300;
+	u32 fuse_address = h_cfg.t210b01 ? 0x7000F898 : 0x7000F900;
+	u32 fuse_array_size = (h_cfg.t210b01 ? 256 : 192) * sizeof(u32);
+
 	gfx_clear_partial_grey(0x1B, 0, 1256);
 	gfx_con_setpos(0, 0);
 
@@ -66,8 +57,8 @@ void print_fuseinfo()
 		byte_swap_32(FUSE(FUSE_PRIVATE_KEY0)), byte_swap_32(FUSE(FUSE_PRIVATE_KEY1)),
 		byte_swap_32(FUSE(FUSE_PRIVATE_KEY2)), byte_swap_32(FUSE(FUSE_PRIVATE_KEY3)));
 
-	gfx_printf("%k(Unlocked) fuse cache:\n\n%k", 0xFF00DDFF, 0xFFCCCCCC);
-	gfx_hexdump(0x7000F900, (u8 *)0x7000F900, 0x300);
+	gfx_printf("%kFuse cache:\n\n%k", 0xFF00DDFF, 0xFFCCCCCC);
+	gfx_hexdump(fuse_address, (u8 *)fuse_address, fuse_size);
 
 	gfx_puts("\nPress POWER to dump them to SD Card.\nPress VOL to go to the menu.\n");
 
@@ -78,13 +69,13 @@ void print_fuseinfo()
 		{
 			char path[64];
 			emmcsn_path_impl(path, "/dumps", "fuse_cached.bin", NULL);
-			if (!sd_save_to_file((u8 *)0x7000F900, 0x300, path))
+			if (!sd_save_to_file((u8 *)fuse_address, fuse_size, path))
 				gfx_puts("\nfuse_cached.bin saved!\n");
 
-			u32 words[192];
+			u32 words[256];
 			fuse_read_array(words);
 			emmcsn_path_impl(path, "/dumps", "fuse_array_raw.bin", NULL);
-			if (!sd_save_to_file((u8 *)words, sizeof(words), path))
+			if (!sd_save_to_file((u8 *)words, fuse_array_size, path))
 				gfx_puts("\nfuse_array_raw.bin saved!\n");
 
 			sd_end();
@@ -131,7 +122,7 @@ void print_mmc_info()
 
 	static const u32 SECTORS_TO_MIB_COEFF = 11;
 
-	if (!sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
+	if (!emmc_initialize(false))
 	{
 		EPRINTF("Failed to init eMMC.");
 		goto out;
@@ -234,7 +225,7 @@ void print_mmc_info()
 
 			sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_GPP);
 			LIST_INIT(gpt);
-			nx_emmc_gpt_parse(&gpt, &emmc_storage);
+			emmc_gpt_parse(&gpt);
 			int gpp_idx = 0;
 			LIST_FOREACH_ENTRY(emmc_part_t, part, &gpt, link)
 			{
@@ -243,7 +234,7 @@ void print_mmc_info()
 					part->lba_end - part->lba_start + 1, part->lba_start, part->lba_end);
 				gfx_put_small_sep();
 			}
-			nx_emmc_gpt_free(&gpt);
+			emmc_gpt_free(&gpt);
 		}
 	}
 
@@ -321,116 +312,10 @@ void print_sdcard_info()
 			EPRINTF("Make sure that it is inserted.");
 		else
 			EPRINTF("SD Card Reader is not properly seated!");
+		sd_end();
 	}
 
 	btn_wait();
-}
-
-void print_tsec_key()
-{
-	gfx_clear_partial_grey(0x1B, 0, 1256);
-	gfx_con_setpos(0, 0);
-
-	u32 retries = 0;
-
-	tsec_ctxt_t tsec_ctxt;
-
-	sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400);
-
-	// Read package1.
-	u8 *pkg1 = (u8 *)malloc(0x40000);
-	sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_BOOT0);
-	sdmmc_storage_read(&emmc_storage, 0x100000 / NX_EMMC_BLOCKSIZE, 0x40000 / NX_EMMC_BLOCKSIZE, pkg1);
-	sdmmc_storage_end(&emmc_storage);
-	const pkg1_id_t *pkg1_id = pkg1_identify(pkg1);
-	if (!pkg1_id)
-	{
-		EPRINTF("Unknown pkg1 version.");
-		goto out_wait;
-	}
-
-	u8 keys[SE_KEY_128_SIZE * 2];
-	memset(keys, 0x00, 0x20);
-
-	tsec_ctxt.fw = (u8 *)pkg1 + pkg1_id->tsec_off;
-	tsec_ctxt.pkg1 = pkg1;
-	tsec_ctxt.pkg11_off = pkg1_id->pkg11_off;
-	tsec_ctxt.secmon_base = pkg1_id->secmon_base;
-
-	if (pkg1_id->kb <= KB_FIRMWARE_VERSION_600)
-		tsec_ctxt.size = 0xF00;
-	else if (pkg1_id->kb == KB_FIRMWARE_VERSION_620)
-		tsec_ctxt.size = 0x2900;
-	else if (pkg1_id->kb == KB_FIRMWARE_VERSION_700)
-	{
-		tsec_ctxt.size = 0x3000;
-		// Exit after TSEC key generation.
-		*((vu16 *)((u32)tsec_ctxt.fw + 0x2DB5)) = 0x02F8;
-	}
-	else
-		tsec_ctxt.size = 0x3300;
-
-	if (pkg1_id->kb == KB_FIRMWARE_VERSION_620)
-	{
-		u8 *tsec_paged = (u8 *)page_alloc(3);
-		memcpy(tsec_paged, (void *)tsec_ctxt.fw, tsec_ctxt.size);
-		tsec_ctxt.fw = tsec_paged;
-	}
-
-	int res = 0;
-
-	while (tsec_query(keys, pkg1_id->kb, &tsec_ctxt) < 0)
-	{
-		memset(keys, 0x00, 0x20);
-
-		retries++;
-
-		if (retries > 3)
-		{
-			res = -1;
-			break;
-		}
-	}
-
-	gfx_printf("%kTSEC key:  %k", 0xFF00DDFF, 0xFFCCCCCC);
-
-	if (res >= 0)
-	{
-		for (u32 j = 0; j < SE_KEY_128_SIZE; j++)
-			gfx_printf("%02X", keys[j]);
-
-		if (pkg1_id->kb == KB_FIRMWARE_VERSION_620)
-		{
-			gfx_printf("\n%kTSEC root: %k", 0xFF00DDFF, 0xFFCCCCCC);
-			for (u32 j = 0; j < SE_KEY_128_SIZE; j++)
-				gfx_printf("%02X", keys[SE_KEY_128_SIZE + j]);
-		}
-	}
-	else
-		EPRINTFARGS("ERROR %X\n", res);
-
-	gfx_puts("\n\nPress POWER to dump them to SD Card.\nPress VOL to go to the menu.\n");
-
-	u32 btn = btn_wait();
-	if (btn & BTN_POWER)
-	{
-		if (sd_mount())
-		{
-			char path[64];
-			emmcsn_path_impl(path, "/dumps", "tsec_keys.bin", NULL);
-			if (!sd_save_to_file(keys, SE_KEY_128_SIZE * 2, path))
-				gfx_puts("\nDone!\n");
-			sd_end();
-		}
-	}
-	else
-		goto out;
-
-out_wait:
-	btn_wait();
-
-out:
-	free(pkg1);
 }
 
 void print_fuel_gauge_info()

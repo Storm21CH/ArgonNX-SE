@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018-2021 CTCaer
+ * Copyright (c) 2018-2022 CTCaer
  * Copyright (c) 2018 Reisyukaku
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -19,25 +19,15 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <bdk.h>
+
 #include "fe_tools.h"
 #include "../config.h"
-#include <gfx_utils.h>
 #include "../gfx/tui.h"
 #include "../hos/hos.h"
 #include "../hos/pkg1.h"
 #include "../hos/pkg2.h"
-#include "../hos/sept.h"
 #include <libs/fatfs/ff.h>
-#include <mem/heap.h>
-#include <power/max7762x.h>
-#include <sec/se.h>
-#include <sec/se_t210.h>
-#include "../storage/nx_emmc.h"
-#include <storage/nx_sd.h>
-#include <storage/sdmmc.h>
-#include <soc/fuse.h>
-#include <utils/btn.h>
-#include <utils/util.h>
 
 extern boot_cfg_t b_cfg;
 extern hekate_config h_cfg;
@@ -54,10 +44,10 @@ void dump_packages12()
 
 	char path[64];
 
-	u8 *pkg1 = (u8 *)calloc(1, 0x40000);
-	u8 *warmboot = (u8 *)calloc(1, 0x40000);
-	u8 *secmon = (u8 *)calloc(1, 0x40000);
-	u8 *loader = (u8 *)calloc(1, 0x40000);
+	u8 *pkg1 = (u8 *)calloc(1, SZ_256K);
+	u8 *warmboot = (u8 *)calloc(1, SZ_256K);
+	u8 *secmon = (u8 *)calloc(1, SZ_256K);
+	u8 *loader = (u8 *)calloc(1, SZ_256K);
 	u8 *pkg2 = NULL;
 	u8 kb = 0;
 
@@ -66,7 +56,7 @@ void dump_packages12()
 	gfx_clear_partial_grey(0x1B, 0, 1256);
 	gfx_con_setpos(0, 0);
 
-	if (!sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
+	if (!emmc_initialize(false))
 	{
 		EPRINTF("Failed to init eMMC.");
 		goto out_free;
@@ -74,14 +64,14 @@ void dump_packages12()
 	sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_BOOT0);
 
 	// Read package1.
-	sdmmc_storage_read(&emmc_storage, 0x100000 / NX_EMMC_BLOCKSIZE, 0x40000 / NX_EMMC_BLOCKSIZE, pkg1);
+	sdmmc_storage_read(&emmc_storage, 0x100000 / EMMC_BLOCKSIZE, SZ_256K / EMMC_BLOCKSIZE, pkg1);
 	const pkg1_id_t *pkg1_id = pkg1_identify(pkg1);
 	if (!pkg1_id)
 	{
 		EPRINTF("Unknown pkg1 version for reading\nTSEC firmware.");
 		// Dump package1.
 		emmcsn_path_impl(path, "/pkg1", "pkg1_enc.bin", &emmc_storage);
-		if (sd_save_to_file(pkg1, 0x40000, path))
+		if (sd_save_to_file(pkg1, SZ_256K, path))
 			goto out_free;
 		gfx_puts("\nEnc pkg1 dumped to pkg1_enc.bin\n");
 
@@ -90,38 +80,18 @@ void dump_packages12()
 
 	kb = pkg1_id->kb;
 
-	if (!h_cfg.se_keygen_done)
-	{
-		tsec_ctxt.fw = (void *)pkg1 + pkg1_id->tsec_off;
-		tsec_ctxt.pkg1 = (void *)pkg1;
-		tsec_ctxt.pkg11_off = pkg1_id->pkg11_off;
-		tsec_ctxt.secmon_base = pkg1_id->secmon_base;
+	tsec_ctxt.fw = (void *)pkg1 + pkg1_id->tsec_off;
+	tsec_ctxt.pkg1 = (void *)pkg1;
+	tsec_ctxt.pkg11_off = pkg1_id->pkg11_off;
+	tsec_ctxt.secmon_base = pkg1_id->secmon_base;
 
-		if (kb >= KB_FIRMWARE_VERSION_700 && !h_cfg.sept_run)
-		{
-			b_cfg.autoboot = 0;
-			b_cfg.autoboot_list = 0;
+	// Read keyblob.
+	u8 *keyblob = (u8 *)calloc(EMMC_BLOCKSIZE, 1);
+	sdmmc_storage_read(&emmc_storage, 0x180000 / EMMC_BLOCKSIZE + kb, 1, keyblob);
 
-			gfx_printf("sept will run to get the keys.\nThen rerun this option.");
-			btn_wait();
-
-			if (!reboot_to_sept((u8 *)tsec_ctxt.fw, kb, NULL))
-			{
-				gfx_printf("Failed to run sept\n");
-				goto out_free;
-			}
-		}
-
-		// Read keyblob.
-		u8 *keyblob = (u8 *)calloc(NX_EMMC_BLOCKSIZE, 1);
-		sdmmc_storage_read(&emmc_storage, 0x180000 / NX_EMMC_BLOCKSIZE + kb, 1, keyblob);
-
-		// Decrypt.
-		hos_keygen(keyblob, kb, &tsec_ctxt, NULL);
-		if (kb <= KB_FIRMWARE_VERSION_600)
-			h_cfg.se_keygen_done = 1;
-		free(keyblob);
-	}
+	// Decrypt.
+	hos_keygen(keyblob, kb, &tsec_ctxt, false, false);
+	free(keyblob);
 
 	if (kb <= KB_FIRMWARE_VERSION_600)
 		pkg1_decrypt(pkg1_id, pkg1);
@@ -155,7 +125,7 @@ void dump_packages12()
 
 		// Dump package1.1.
 		emmcsn_path_impl(path, "/pkg1", "pkg1_decr.bin", &emmc_storage);
-		if (sd_save_to_file(pkg1, 0x40000, path))
+		if (sd_save_to_file(pkg1, SZ_256K, path))
 			goto out_free;
 		gfx_puts("\npkg1 dumped to pkg1_decr.bin\n");
 
@@ -182,25 +152,33 @@ void dump_packages12()
 	sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_GPP);
 	// Parse eMMC GPT.
 	LIST_INIT(gpt);
-	nx_emmc_gpt_parse(&gpt, &emmc_storage);
+	emmc_gpt_parse(&gpt);
 	// Find package2 partition.
-	emmc_part_t *pkg2_part = nx_emmc_part_find(&gpt, "BCPKG2-1-Normal-Main");
+	emmc_part_t *pkg2_part = emmc_part_find(&gpt, "BCPKG2-1-Normal-Main");
 	if (!pkg2_part)
 		goto out;
 
 	// Read in package2 header and get package2 real size.
-	u8 *tmp = (u8 *)malloc(NX_EMMC_BLOCKSIZE);
-	nx_emmc_part_read(&emmc_storage, pkg2_part, 0x4000 / NX_EMMC_BLOCKSIZE, 1, tmp);
+	u8 *tmp = (u8 *)malloc(EMMC_BLOCKSIZE);
+	emmc_part_read(pkg2_part, 0x4000 / EMMC_BLOCKSIZE, 1, tmp);
 	u32 *hdr_pkg2_raw = (u32 *)(tmp + 0x100);
 	u32 pkg2_size = hdr_pkg2_raw[0] ^ hdr_pkg2_raw[2] ^ hdr_pkg2_raw[3];
 	free(tmp);
 	// Read in package2.
-	u32 pkg2_size_aligned = ALIGN(pkg2_size, NX_EMMC_BLOCKSIZE);
+	u32 pkg2_size_aligned = ALIGN(pkg2_size, EMMC_BLOCKSIZE);
 	pkg2 = malloc(pkg2_size_aligned);
-	nx_emmc_part_read(&emmc_storage, pkg2_part, 0x4000 / NX_EMMC_BLOCKSIZE,
-		pkg2_size_aligned / NX_EMMC_BLOCKSIZE, pkg2);
+	emmc_part_read(pkg2_part, 0x4000 / EMMC_BLOCKSIZE,
+		pkg2_size_aligned / EMMC_BLOCKSIZE, pkg2);
+
+#if 0
+	emmcsn_path_impl(path, "/pkg2", "pkg2_encr.bin", &emmc_storage);
+	if (sd_save_to_file(pkg2, pkg2_size_aligned, path))
+		goto out;
+	gfx_puts("\npkg2 dumped to pkg2_encr.bin\n");
+#endif
+
 	// Decrypt package2 and parse KIP1 blobs in INI1 section.
-	pkg2_hdr_t *pkg2_hdr = pkg2_decrypt(pkg2, kb);
+	pkg2_hdr_t *pkg2_hdr = pkg2_decrypt(pkg2, kb, false);
 	if (!pkg2_hdr)
 	{
 		gfx_printf("Pkg2 decryption failed!\n");
@@ -248,7 +226,7 @@ void dump_packages12()
 	gfx_puts("\nDone. Press any key...\n");
 
 out:
-	nx_emmc_gpt_free(&gpt);
+	emmc_gpt_free(&gpt);
 out_free:
 	free(pkg1);
 	free(secmon);
@@ -269,7 +247,7 @@ void _toggle_autorcm(bool enable)
 	gfx_clear_partial_grey(0x1B, 0, 1256);
 	gfx_con_setpos(0, 0);
 
-	if (!sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
+	if (!emmc_initialize(false))
 	{
 		EPRINTF("Failed to init eMMC.");
 		goto out;
@@ -287,7 +265,7 @@ void _toggle_autorcm(bool enable)
 	// Iterate BCTs.
 	for (i = 0; i < 4; i++)
 	{
-		sect = (0x200 + (0x4000 * i)) / NX_EMMC_BLOCKSIZE;
+		sect = (0x200 + (0x4000 * i)) / EMMC_BLOCKSIZE;
 		sdmmc_storage_read(&emmc_storage, sect, 1, tempbuf);
 
 		// Check if 2nd byte of modulus is correct.
@@ -324,9 +302,7 @@ void menu_autorcm()
 
 	if (h_cfg.rcm_patched)
 	{
-		gfx_printf("%kThis device is RCM patched and\nAutoRCM function is disabled.\n\n"
-			"In case %kAutoRCM%k is enabled\nthis will %kBRICK%k the device PERMANENTLY!!%k",
-			0xFFFFDD00, 0xFFFF0000, 0xFFFFDD00, 0xFFFF0000, 0xFFFFDD00, 0xFFCCCCCC);
+		WPRINTF("This device is RCM patched and the\nfunction is disabled to avoid BRICKS!\n");
 		btn_wait();
 
 		return;
@@ -335,7 +311,7 @@ void menu_autorcm()
 	// Do a simple check on the main BCT.
 	bool disabled = true;
 
-	if (!sdmmc_storage_init_mmc(&emmc_storage, &emmc_sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400))
+	if (!emmc_initialize(false))
 	{
 		EPRINTF("Failed to init eMMC.");
 		btn_wait();
@@ -349,7 +325,7 @@ void menu_autorcm()
 
 	u8 *tempbuf = (u8 *)malloc(0x200);
 	sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_BOOT0);
-	sdmmc_storage_read(&emmc_storage, 0x200 / NX_EMMC_BLOCKSIZE, 1, tempbuf);
+	sdmmc_storage_read(&emmc_storage, 0x200 / EMMC_BLOCKSIZE, 1, tempbuf);
 
 	// Check if 2nd byte of modulus is correct.
 	if (tempbuf[0x11] == mod1)
@@ -391,219 +367,5 @@ void menu_autorcm()
 
 	tui_do_menu(&menu);
 }
-
-int _fix_attributes(char *path, u32 *total, u32 hos_folder, u32 check_first_run)
-{
-	FRESULT res;
-	DIR dir;
-	u32 dirLength = 0;
-	static FILINFO fno;
-
-	if (check_first_run)
-	{
-		// Read file attributes.
-		res = f_stat(path, &fno);
-		if (res != FR_OK)
-			return res;
-
-		// Check if archive bit is set.
-		if (fno.fattrib & AM_ARC)
-		{
-			*(u32 *)total = *(u32 *)total + 1;
-			f_chmod(path, 0, AM_ARC);
-		}
-	}
-
-	// Open directory.
-	res = f_opendir(&dir, path);
-	if (res != FR_OK)
-		return res;
-
-	dirLength = strlen(path);
-	for (;;)
-	{
-		// Clear file or folder path.
-		path[dirLength] = 0;
-
-		// Read a directory item.
-		res = f_readdir(&dir, &fno);
-
-		// Break on error or end of dir.
-		if (res != FR_OK || fno.fname[0] == 0)
-			break;
-
-		// Skip official Nintendo dir if started from root.
-		if (!hos_folder && !strcmp(fno.fname, "Nintendo"))
-			continue;
-
-		// Set new directory or file.
-		memcpy(&path[dirLength], "/", 1);
-		memcpy(&path[dirLength + 1], fno.fname, strlen(fno.fname) + 1);
-
-		// Check if archive bit is set.
-		if (fno.fattrib & AM_ARC)
-		{
-			*total = *total + 1;
-			f_chmod(path, 0, AM_ARC);
-		}
-
-		// Is it a directory?
-		if (fno.fattrib & AM_DIR)
-		{
-			// Set archive bit to NCA folders.
-			if (hos_folder && !strcmp(fno.fname + strlen(fno.fname) - 4, ".nca"))
-			{
-				*total = *total + 1;
-				f_chmod(path, AM_ARC, AM_ARC);
-			}
-
-			// Update status bar.
-			tui_sbar(false);
-
-			// Enter the directory.
-			res = _fix_attributes(path, total, hos_folder, 0);
-			if (res != FR_OK)
-				break;
-		}
-	}
-
-	f_closedir(&dir);
-
-	return res;
-}
-
-void _fix_sd_attr(u32 type)
-{
-	gfx_clear_partial_grey(0x1B, 0, 1256);
-	gfx_con_setpos(0, 0);
-
-	char path[256];
-	char label[16];
-
-	u32 total = 0;
-	if (sd_mount())
-	{
-		switch (type)
-		{
-		case 0:
-			strcpy(path, "/");
-			strcpy(label, "SD Card");
-			break;
-		case 1:
-		default:
-			strcpy(path, "/Nintendo");
-			strcpy(label, "Nintendo folder");
-			break;
-		}
-
-		gfx_printf("Traversing all %s files!\nThis may take some time...\n\n", label);
-		_fix_attributes(path, &total, type, type);
-		gfx_printf("%kTotal archive bits cleared: %d!%k\n\nDone! Press any key...", 0xFF96FF00, total, 0xFFCCCCCC);
-		sd_end();
-	}
-	btn_wait();
-}
-
-void fix_sd_all_attr() { _fix_sd_attr(0); }
-void fix_sd_nin_attr() { _fix_sd_attr(1); }
-
-/* void fix_fuel_gauge_configuration()
-{
-	gfx_clear_partial_grey(0x1B, 0, 1256);
-	gfx_con_setpos(0, 0);
-
-	int battVoltage, avgCurrent;
-
-	max17050_get_property(MAX17050_VCELL, &battVoltage);
-	max17050_get_property(MAX17050_AvgCurrent, &avgCurrent);
-
-	// Check if still charging. If not, check if battery is >= 95% (4.1V).
-	if (avgCurrent < 0 && battVoltage > 4100)
-	{
-		if ((avgCurrent / 1000) < -10)
-			EPRINTF("You need to be connected to a wall adapter,\nto apply this fix!");
-		else
-		{
-			gfx_printf("%kAre you really sure?\nThis will reset your fuel gauge completely!\n", 0xFFFFDD00);
-			gfx_printf("Additionally this will power off your console.\n%k", 0xFFCCCCCC);
-
-			gfx_puts("\nPress POWER to Continue.\nPress VOL to go to the menu.\n\n\n");
-
-			u32 btn = btn_wait();
-			if (btn & BTN_POWER)
-			{
-				max17050_fix_configuration();
-				msleep(1000);
-				gfx_con_getpos(&gfx_con.savedx,  &gfx_con.savedy);
-				u16 value = 0;
-				gfx_printf("%kThe console will power off in 45 seconds.\n%k", 0xFFFFDD00, 0xFFCCCCCC);
-				while (value < 46)
-				{
-					gfx_con_setpos(gfx_con.savedx, gfx_con.savedy);
-					gfx_printf("%2ds elapsed", value);
-					msleep(1000);
-					value++;
-				}
-				msleep(2000);
-
-				power_off();
-			}
-			return;
-		}
-	}
-	else
-		EPRINTF("You need a fully charged battery\nand connected to a wall adapter,\nto apply this fix!");
-
-	msleep(500);
-	btn_wait();
-} */
-
-/*void reset_pmic_fuel_gauge_charger_config()
-{
-	int avgCurrent;
-
-	gfx_clear_partial_grey(0x1B, 0, 1256);
-	gfx_con_setpos(0, 0);
-
-	gfx_printf("%k\nThis will wipe your battery stats completely!\n"
-		"%kAnd it may not power on without physically\nremoving and re-inserting the battery.\n%k"
-		"\nAre you really sure?%k\n", 0xFFFFDD00, 0xFFFF0000, 0xFFFFDD00, 0xFFCCCCCC);
-
-	gfx_puts("\nPress POWER to Continue.\nPress VOL to go to the menu.\n\n\n");
-	u32 btn = btn_wait();
-	if (btn & BTN_POWER)
-	{
-		gfx_clear_partial_grey(0x1B, 0, 1256);
-		gfx_con_setpos(0, 0);
-		gfx_printf("%kKeep the USB cable connected!%k\n\n", 0xFFFFDD00, 0xFFCCCCCC);
-		gfx_con_getpos(&gfx_con.savedx,  &gfx_con.savedy);
-
-		u8 value = 30;
-		while (value > 0)
-		{
-			gfx_con_setpos(gfx_con.savedx, gfx_con.savedy);
-			gfx_printf("%kWait... (%ds)   %k", 0xFF888888, value, 0xFFCCCCCC);
-			msleep(1000);
-			value--;
-		}
-		gfx_con_setpos(gfx_con.savedx, gfx_con.savedy);
-
-		//Check if still connected.
-		max17050_get_property(MAX17050_AvgCurrent, &avgCurrent);
-		if ((avgCurrent / 1000) < -10)
-			EPRINTF("You need to be connected to a wall adapter\nor PC to apply this fix!");
-		else
-		{
-			// Apply fix.
-			bq24193_fake_battery_removal();
-			gfx_printf("Done!               \n"
-				"%k1. Remove the USB cable\n"
-				"2. Press POWER for 15s.\n"
-				"3. Reconnect the USB to power-on!%k\n", 0xFFFFDD00, 0xFFCCCCCC);
-		}
-		msleep(500);
-		btn_wait();
-	}
-}*/
 
 #pragma GCC pop_options

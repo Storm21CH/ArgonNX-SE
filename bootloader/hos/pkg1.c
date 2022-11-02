@@ -20,19 +20,12 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <bdk.h>
+
 #include "hos.h"
 #include "pkg1.h"
 #include "../config.h"
-#include <gfx_utils.h>
 #include <libs/compr/lz4.h>
-#include <mem/heap.h>
-#include <soc/fuse.h>
-#include <sec/se.h>
-#include <soc/pmc.h>
-#include <soc/t210.h>
-#include <storage/nx_sd.h>
-#include <utils/aarch64_util.h>
-#include <utils/util.h>
 
 extern hekate_config h_cfg;
 
@@ -169,7 +162,11 @@ static const pkg1_id_t _pkg1_ids[] = {
 	{ "20200303104606", 10, 13, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000, NULL }, // 10.0.0 - 10.2.0.
 	{ "20201030110855", 10, 14, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000, NULL }, // 11.0.0 - 11.0.1.
 	{ "20210129111626", 10, 14, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000, NULL }, // 12.0.0 - 12.0.1.
-	{ "20210422145837", 10, 15, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000, NULL }, // 12.0.2+
+	{ "20210422145837", 10, 15, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000, NULL }, // 12.0.2 - 12.0.3.
+	{ "20210607122020", 11, 15, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000, NULL }, // 12.1.0.
+	{ "20210805123730", 12, 15, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000, NULL }, // 13.0.0 - 13.2.0.
+	{ "20220105094454", 12, 16, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000, NULL }, // 13.2.1.
+	{ "20220209100018", 13, 16, 0x0E00, 0x6FE0, 0x40030000, 0x4003E000, NULL }, // 14.0.0+
 };
 
 const pkg1_id_t *pkg1_get_latest()
@@ -180,13 +177,16 @@ const pkg1_id_t *pkg1_get_latest()
 const pkg1_id_t *pkg1_identify(u8 *pkg1)
 {
 	char build_date[15];
-	memcpy(build_date, (char *)(pkg1 + 0x10), 14);
+	pk1_hdr_t *hdr = (pk1_hdr_t *)pkg1;
+
+	memcpy(build_date, hdr->timestamp, 14);
 	build_date[14] = 0;
 	gfx_printf("Found pkg1 ('%s').\n\n", build_date);
 
-	for (u32 i = 0; i < ARRAY_SIZE(_pkg1_ids); i++)
-		if (!memcmp(pkg1 + 0x10, _pkg1_ids[i].id, 8))
+	for (int i = ARRAY_SIZE(_pkg1_ids) - 1; i >= 0; i--)
+		if (!memcmp(hdr->timestamp, _pkg1_ids[i].id, 8))
 			return &_pkg1_ids[i];
+
 	return NULL;
 }
 
@@ -211,7 +211,7 @@ int pkg1_decrypt(const pkg1_id_t *id, u8 *pkg1)
 		// Use BEK for T210B01.
 		// Additionally, skip 0x20 bytes from decryption to maintain the header.
 		se_aes_iv_clear(13);
-		se_aes_crypt_cbc(13, 0, pkg1 + 0x20, oem_hdr->size - 0x20, pkg1 + 0x20, oem_hdr->size - 0x20);
+		se_aes_crypt_cbc(13, DECRYPT, pkg1 + 0x20, oem_hdr->size - 0x20, pkg1 + 0x20, oem_hdr->size - 0x20);
 	}
 
 	// Return if header is valid.
@@ -423,4 +423,36 @@ int pkg1_warmboot_config(void *hos_ctxt, u32 warmboot_base)
 	}
 
 	return res;
+}
+
+void pkg1_warmboot_rsa_mod(u32 warmboot_base)
+{
+	// Set warmboot binary rsa modulus.
+	u8 *rsa_mod = (u8 *)malloc(512);
+
+	sdmmc_storage_set_mmc_partition(&emmc_storage, EMMC_BOOT0);
+
+	u32 sector;
+	u8  mod0, mod1;
+
+	// Get the correct RSA modulus byte masks.
+	nx_emmc_get_autorcm_masks(&mod0, &mod1);
+
+	// Iterate BCTs.
+	for (u32 i = 0; i < 4; i++)
+	{
+		sector = 1 + (32 * i); // 0x4000 bct + 0x200 offset.
+		sdmmc_storage_read(&emmc_storage, sector, 1, rsa_mod);
+
+		// Check if 2nd byte of modulus is correct.
+		if (rsa_mod[0x11] != mod1)
+			continue;
+
+		// Patch AutoRCM out.
+		rsa_mod[0x10] = mod0;
+
+		break;
+	}
+
+	memcpy((void *)(warmboot_base + 0x10), rsa_mod + 0x10, 0x100);
 }

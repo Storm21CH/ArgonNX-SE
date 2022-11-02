@@ -2,7 +2,7 @@
  * Minerva Training Cell
  * DRAM Training for Tegra X1 SoC. Supports LPDDR4.
  *
- * Copyright (c) 2018-2021 CTCaer  <ctcaer@gmail.com>
+ * Copyright (c) 2018-2022 CTCaer  <ctcaer@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -34,8 +34,6 @@
 
 #define PERF_HACK
 
-bool emc_2X_clk_src_is_pllmb;
-bool fsp_for_src_freq;
 bool train_ram_patterns;
 
 /*
@@ -67,20 +65,29 @@ bool train_ram_patterns;
 static pllm_clk_config_t pllm_clk_config_table[] =
 {
 	// pll_osc_in, pll_out, pll_feedback_div, pll_input_div, pll_post_div.
-	{38400, 297600,  93,  4, 2}, // ((38400 / 4) * 93)  / 3
-	{38400, 400000,  125, 4, 2}, // ((38400 / 4) * 125) / 3
-	{38400, 408000,  85,  4, 1}, // ((38400 / 4) * 85)  / 2
-	{38400, 532800,  111, 4, 1}, // ((38400 / 4) * 111) / 2
-	{38400, 665600,  104, 3, 1}, // ((38400 / 3) * 104) / 2
-	{38400, 800000,  125, 3, 1}, // ((38400 / 3) * 125) / 2
-	{38400, 931200,  97,  4, 0}, // (38400 / 4) * 97
-	{38400, 1065600, 111, 4, 0}, // (38400 / 4) * 111
-	{38400, 1200000, 125, 4, 0}, // (38400 / 4) * 125
-	{38400, 1331200, 104, 3, 0}, // (38400 / 3) * 104
-	{38400, 1459200, 76,  2, 0}, // (38400 / 2) * 76
-	{38400, 1600000, 125, 3, 0}, // (38400 / 3) * 125
-	{38400, 1862400, 97,  2, 0}, // (38400 / 2) * 97
-	{38400, 2131200, 111, 2, 0}, // (38400 / 2) * 111
+	// f_in,       f_out,   n,                m,             p.
+	// f_out = ((f_in / m) * n) / p. Example: 1600000 = (38400 / 2) * 97.
+	{38400, 297600,  93,  4, 2},
+	{38400, 400000,  125, 4, 2},
+	{38400, 408000,  85,  4, 1},
+	{38400, 532800,  111, 4, 1},
+	{38400, 665600,  104, 3, 1},
+	{38400, 800000,  125, 3, 1},
+	{38400, 931200,  97,  4, 0},
+	{38400, 1065600, 111, 4, 0},
+	{38400, 1200000, 125, 4, 0},
+	{38400, 1331200, 104, 3, 0},
+	{38400, 1459200, 76,  2, 0},
+	{38400, 1600000, 125, 3, 0},
+	{38400, 1728000, 90,  2, 0}, // Custom. Normalized 1733 MHz.
+	{38400, 1795200, 187, 4, 0}, // Custom.
+	{38400, 1862400, 97,  2, 0}, // JEDEC Standard. (T210 official max).
+	{38400, 1894400, 148, 3, 0}, // Custom.
+	{38400, 1932800, 151, 3, 0}, // Custom.
+	{38400, 1996800, 104, 2, 0}, // Custom. Normalized 2000 MHz.
+	{38400, 2064000, 215, 4, 0}, // Custom.
+	{38400, 2099200, 164, 3, 0}, // Custom.
+	{38400, 2131200, 111, 2, 0}, // JEDEC Standard. (T210B01 official max).
  	{0,     0,       0,   0, 0}
 };
 
@@ -1173,7 +1180,7 @@ out:
 	return mr4_0;
 }
 
-static u32 _pllm_clk_base_cfg(u32 rate_KHz, u32 clk_src_emc, bool emc_2X_clk_src_is_PLLMB)
+static u32 _pllm_clk_base_cfg(u32 rate_KHz, u32 clk_src_emc, bool new_src_is_PLLMB)
 {
 	u32 dividers = 0;
 	u32 i = 0;
@@ -1191,7 +1198,7 @@ static u32 _pllm_clk_base_cfg(u32 rate_KHz, u32 clk_src_emc, bool emc_2X_clk_src
 	if (pllm_clk_config->pll_osc_in)
 	{
 		dividers = pllm_clk_config->pll_input_div | (pllm_clk_config->pll_feedback_div << 8) | ((pllm_clk_config->pll_post_div & 0x1F) << 20);
-		if (emc_2X_clk_src_is_PLLMB)
+		if (new_src_is_PLLMB)
 		{
 			CLOCK(CLK_RST_CONTROLLER_PLLMB_BASE) = dividers;
 			CLOCK(CLK_RST_CONTROLLER_PLLMB_BASE) |= PLLM_ENABLE;
@@ -1402,7 +1409,7 @@ static u32 _dvfs_power_ramp_down(bool flip_backward, emc_table_t *src_emc_table_
 	return ramp_down_wait;
 }
 
-static u32 _dvfs_power_ramp_up(bool flip_backward, emc_table_t *src_emc_table_entry, emc_table_t *dst_emc_table_entry, u8 needs_training, u32 dst_clock_period)
+static u32 _dvfs_power_ramp_up(bool flip_backward, emc_table_t *src_emc_table_entry, emc_table_t *dst_emc_table_entry, u32 needs_training, u32 dst_clock_period)
 {
 	u32 pmacro_cmd_pad;
 	u32 pmacro_dq_pad;
@@ -1422,7 +1429,7 @@ static u32 _dvfs_power_ramp_up(bool flip_backward, emc_table_t *src_emc_table_en
 		pmacro_cfg5 = src_emc_table_entry->burst_regs.emc_fbio_cfg5_idx;
 		pmacro_common_tx = src_emc_table_entry->burst_regs.emc_pmacro_common_pad_tx_ctrl_idx;
 	}
-	else if (needs_training & 3)
+	else if (needs_training & NEEDS_TRAINING_CA_COMBO)
 	{
 		pmacro_cmd_pad = dst_emc_table_entry->shadow_regs_ca_train.emc_pmacro_cmd_pad_tx_ctrl_idx;
 		pmacro_dq_pad = dst_emc_table_entry->shadow_regs_ca_train.emc_pmacro_data_pad_tx_ctrl_idx;
@@ -1430,7 +1437,7 @@ static u32 _dvfs_power_ramp_up(bool flip_backward, emc_table_t *src_emc_table_en
 		pmacro_cfg5 = dst_emc_table_entry->shadow_regs_ca_train.emc_fbio_cfg5_idx;
 		pmacro_common_tx = dst_emc_table_entry->shadow_regs_ca_train.emc_pmacro_common_pad_tx_ctrl_idx;
 	}
-	else if (needs_training & 0xC)
+	else if (needs_training & NEEDS_TRAINING_QUSE_COMBO)
 	{
 		pmacro_cmd_pad = dst_emc_table_entry->shadow_regs_quse_train.emc_pmacro_cmd_pad_tx_ctrl_idx;
 		pmacro_dq_pad = dst_emc_table_entry->shadow_regs_quse_train.emc_pmacro_data_pad_tx_ctrl_idx;
@@ -1438,7 +1445,7 @@ static u32 _dvfs_power_ramp_up(bool flip_backward, emc_table_t *src_emc_table_en
 		pmacro_cfg5 = dst_emc_table_entry->shadow_regs_quse_train.emc_fbio_cfg5_idx;
 		pmacro_common_tx = dst_emc_table_entry->shadow_regs_quse_train.emc_pmacro_common_pad_tx_ctrl_idx;
 	}
-	else if (needs_training & 0xF0)
+	else if (needs_training & (NEEDS_TRAINING_WR_COMBO | NEEDS_TRAINING_RD_COMBO))
 	{
 		pmacro_cmd_pad = dst_emc_table_entry->shadow_regs_rdwr_train.emc_pmacro_cmd_pad_tx_ctrl_idx;
 		pmacro_dq_pad = dst_emc_table_entry->shadow_regs_rdwr_train.emc_pmacro_data_pad_tx_ctrl_idx;
@@ -2181,15 +2188,15 @@ static bool _check_freq_changed(u32 dst_entry_rate_KHz, u32 dst_entry_clk_src_em
 
 static void _save_train_results(emc_table_t *mtc_table_entry, u32 needs_training, u32 dram_dev_num, bool channel1_enabled)
 {
-	bool needs_ca_training = needs_training & 1;
-	bool needs_ca_vref_training = (needs_training >> 1) & 1;
-	bool needs_quse_training = (needs_training >> 2) & 1;
-	bool needs_quse_vref_training = (needs_training >> 3) & 1;
-	bool needs_wr_training = (needs_training >> 4) & 1;
-	bool needs_wr_vref_training = (needs_training >> 5) & 1;
-	bool needs_rd_training = (needs_training >> 6) & 1;
-	bool needs_rd_vref_training = (needs_training >> 7) & 1;
-	bool needs_training_in_self_refresh = (needs_training >> 9) & 1;
+	bool needs_ca_training = !!(needs_training & NEEDS_TRAINING_CA);
+	bool needs_ca_vref_training = !!(needs_training & NEEDS_TRAINING_CA_VREF);
+	bool needs_quse_training = !!(needs_training & NEEDS_TRAINING_QUSE);
+	bool needs_quse_vref_training = !!(needs_training & NEEDS_TRAINING_QUSE_VREF);
+	bool needs_wr_training = !!(needs_training & NEEDS_TRAINING_WR);
+	bool needs_wr_vref_training = !!(needs_training & NEEDS_TRAINING_WR_VREF);
+	bool needs_rd_training = !!(needs_training & NEEDS_TRAINING_RD);
+	bool needs_rd_vref_training = !!(needs_training & NEEDS_TRAINING_RD_VREF);
+	bool needs_training_in_self_refresh = !!(needs_training & NEEDS_TRAINING_IN_SELF_REFRESH);
 
 	if (needs_ca_training)
 	{
@@ -2552,36 +2559,39 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 	u32 ramp_up_wait;
 	u32 ramp_down_wait;
 	u32 bg_regulator_mode_change;
-	u32 mr13_flip_fspop = 0;
-	u32 mr13_flip_fspwr = 0;
+	u32 mr13_flip_fspop;
+	u32 mr13_flip_fspwr;
 	u32 mr13_catr_enable;
 
-	/* needs_training LOBYTE table var */
+	/* needs_training flags */
 	/*
-	 | bit | Description                |
-	 |-----|----------------------------|
-	 |  0  | Needs CA        training   |
-	 |  1  | Needs CA_VREF   training   |
-	 |  2  | Needs QUSE      training   |
-	 |  3  | Needs QUSE_VREF training   |
-	 |  4  | Needs WR        training   |
-	 |  5  | Needs WR_VREF   training   |
-	 |  6  | Needs RD        training   |
-	 |  7  | Needs RD_VREF   training   |
+	 | bit | Description                      |
+	 |-----|----------------------------------|
+	 |  0  | Needs CA              training   |
+	 |  1  | Needs CA_VREF         training   |
+	 |  2  | Needs QUSE            training   |
+	 |  3  | Needs QUSE_VREF       training   |
+	 |  4  | Needs WR              training   |
+	 |  5  | Needs WR_VREF         training   |
+	 |  6  | Needs RD              training   |
+	 |  7  | Needs RD_VREF         training   |
+	 |  8  | Needs SWAP_RANK       training   |
+	 |  9  | Needs IN_SELF_REFRESH training   |
 	 */
 
 	bool compensate_trimmer_applicable = false;
-	bool needs_ca_or_cavref_training = (needs_training & 3) != 0;
-	bool needs_tristate_training = (needs_training & 0xF7) != 0;
-	bool needs_ca_training = needs_training & 1;
-	bool needs_ca_vref_training = (needs_training >> 1) & 1;
-	bool needs_quse_training = (needs_training >> 2) & 1;
-	bool needs_quse_vref_training = (needs_training >> 3) & 1;
-	bool needs_wr_training = (needs_training >> 4) & 1;
-	bool needs_wr_vref_training = (needs_training >> 5) & 1;
-	bool needs_rd_training = (needs_training >> 6) & 1;
-	bool needs_rd_vref_training = (needs_training >> 7) & 1;
-	bool needs_swap_rank_training = (needs_training >> 8) & 1;
+	bool needs_ca_combo_training = !!(needs_training & NEEDS_TRAINING_CA_COMBO);
+	bool needs_tristate_training = !!(needs_training & NEEDS_TRISTATE_TRAINING);
+
+	bool needs_ca_training = !!(needs_training & NEEDS_TRAINING_CA);
+	bool needs_ca_vref_training = !!(needs_training & NEEDS_TRAINING_CA_VREF);
+	bool needs_quse_training = !!(needs_training & NEEDS_TRAINING_QUSE);
+	bool needs_quse_vref_training = !!(needs_training & NEEDS_TRAINING_QUSE_VREF);
+	bool needs_wr_training = !!(needs_training & NEEDS_TRAINING_WR);
+	bool needs_wr_vref_training = !!(needs_training & NEEDS_TRAINING_WR_VREF);
+	bool needs_rd_training = !!(needs_training & NEEDS_TRAINING_RD);
+	bool needs_rd_vref_training = !!(needs_training & NEEDS_TRAINING_RD_VREF);
+	bool needs_swap_rank_training = !!(needs_training & NEEDS_TRAINING_SWAP_RANK);
 
 	bool zcal_resistor_shared = (src_emc_entry->burst_regs.emc_zcal_wait_cnt_idx >> 31) & 1;
 	bool enable_bg_regulator = (dst_emc_entry->burst_regs.emc_pmacro_bg_bias_ctrl_0_idx & 1) ^ 1;
@@ -2592,7 +2602,8 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 	u32 src_clock_period = 1000000000 / src_emc_entry->rate_khz; // In picoseconds.
 	u32 dst_clock_period = 1000000000 / dst_emc_entry->rate_khz; // In picoseconds.
 
-	fsp_for_src_freq = !fsp_for_src_freq;
+	// Get current FSP op/write value.
+	bool enable_fsp_opwr = !(EMC(EMC_MRW3) & 0xC0);
 
 	if (dram_type != DRAM_TYPE_LPDDR4)
 	{
@@ -2739,7 +2750,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 
 	// Step 7 - Bug 200024907 - Patch RP R2P.
 	EPRINTF("Step 7");
-	if (needs_ca_or_cavref_training && dram_dev_num == TWO_RANK)
+	if (needs_ca_combo_training && dram_dev_num == TWO_RANK)
 		EMC(EMC_PIN) = 0x107;
 
 	u32 R2P_war = 0;
@@ -2822,7 +2833,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 
 	// Step 7.2 - Program FSP reference registers and send MRWs to new FSPWR.
 	EPRINTF("Step 7.2");
-	if (fsp_for_src_freq)
+	if (enable_fsp_opwr)
 	{
 		mr13_flip_fspop = dst_emc_entry->emc_mrw3 | 0xC0;
 		mr13_flip_fspwr = (dst_emc_entry->emc_mrw3 & 0xFFFFFF3F) | 0x40;
@@ -2840,7 +2851,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 		else
 			mr13_catr_enable = (mr13_flip_fspwr & 0x3FFFFFFF) | 0x80000001;
 
-		if (needs_ca_or_cavref_training)
+		if (needs_ca_combo_training)
 		{
 			if (needs_swap_rank_training)
 				mr13_flip_fspop = (mr13_flip_fspop & 0x3FFFFFFF) | 0x80000000;
@@ -2869,11 +2880,11 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 		reg_addr = burst_regs_emc_addr_table[i];
 		if (needs_tristate_training)
 		{
-			if (needs_ca_or_cavref_training)
+			if (needs_ca_combo_training)
 				reg_val = dst_burst_regs->shadow_regs_ca_train[i];
-			else if (needs_training & 0xC)
+			else if (needs_training & NEEDS_TRAINING_QUSE_COMBO)
 				reg_val = dst_burst_regs->shadow_regs_quse_train[i];
-			else if (needs_training & 0xF0)
+			else if (needs_training & (NEEDS_TRAINING_WR_COMBO | NEEDS_TRAINING_RD_COMBO))
 				reg_val = dst_burst_regs->shadow_regs_rdwr_train[i];
 			else
 				continue;
@@ -3060,7 +3071,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 		EMC(EMC_DBG) = emc_dbg_o | 2;
 		EMC(EMC_PMACRO_AUTOCAL_CFG_COMMON) = dst_emc_entry->burst_regs.emc_pmacro_autocal_cfg_common_idx | 0x10000;
 
-		if (needs_ca_or_cavref_training)
+		if (needs_ca_combo_training)
 			EMC(EMC_FBIO_CFG5) = src_emc_entry->burst_regs.emc_fbio_cfg5_idx | 0x8000000;
 
 		EMC(EMC_DBG) = emc_dbg_o;
@@ -3075,7 +3086,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 	EPRINTF("Step 10");
 	_ccfifo_write(EMC_SELF_REF, 0x101, 0);
 
-	if (!needs_ca_or_cavref_training && (dst_clock_period <= 2000))
+	if (!needs_ca_combo_training && (dst_clock_period <= 2000))
 	{
 		_ccfifo_write(EMC_MRW3, mr13_flip_fspwr ^ 0x40, 0);
 		_ccfifo_write(EMC_MRW6, (src_emc_entry->burst_regs.emc_mrw6_idx & 0xC0C0) | (dst_emc_entry->burst_regs.emc_mrw6_idx & 0xFFFF3F3F), 0);
@@ -3105,7 +3116,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 		_ccfifo_write(EMC_DBG, emc_dbg_val, 0);
 	}
 
-	if (needs_ca_or_cavref_training)
+	if (needs_ca_combo_training)
 	{
 		_ccfifo_write(EMC_PMACRO_DATA_RX_TERM_MODE, src_emc_entry->burst_regs.emc_pmacro_data_rx_term_mode_idx & 0xFFFFFCCC, 0);
 
@@ -3151,7 +3162,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 	// Step 14 - Bringup CKE pins.
 	EPRINTF("Step 14");
 	u32 emc_pin_val_final = 0;
-	if (needs_ca_or_cavref_training)
+	if (needs_ca_combo_training)
 	{
 		emc_pin_val_final = emc_pin_o & 0xFFFFFFF8;
 		if (dram_dev_num == TWO_RANK)
@@ -3171,7 +3182,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 
 	// Step 15 - Zqlatch.
 	EPRINTF("Step 15");
-	if (!needs_ca_or_cavref_training)
+	if (!needs_ca_combo_training)
 	{
 		s32 zq_latch_dvfs_wait_time;
 		u32 T_PDEX_timing = div_o3(dst_emc_entry->dram_timings.t_pdex * 1000, dst_clock_period);
@@ -3282,7 +3293,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 
 		_ccfifo_write(EMC_SWITCH_BACK_CTRL, 1, 0);
 
-		if (!needs_ca_or_cavref_training || needs_swap_rank_training)
+		if (!needs_ca_combo_training || needs_swap_rank_training)
 		{
 			_ccfifo_write(EMC_MRW3, mr13_flip_fspop ^ 0xC0, 0);
 			_ccfifo_write(EMC_INTSTATUS, 0, 1000000 / dst_clock_period);
@@ -3306,7 +3317,7 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 		else
 			_ccfifo_write(EMC_PIN, (emc_pin_o & 0xFFFFFFF8) | 1, 0);
 
-		if (needs_ca_or_cavref_training)
+		if (needs_ca_combo_training)
 		{
 			_ccfifo_write(EMC_TR_CTRL_0, 0x4A, 200000 / src_clock_period);
 			_ccfifo_write(EMC_TR_CTRL_0, 0x40, 1000000 / src_clock_period);
@@ -3320,14 +3331,14 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 		_ccfifo_write(EMC_ZQ_CAL, 0x80000001, 0);
 		_ccfifo_write(EMC_ZQ_CAL, 0x80000002, 1000000 / src_clock_period);
 
-		if ((!needs_ca_or_cavref_training || needs_swap_rank_training) && dram_dev_num == TWO_RANK)
+		if ((!needs_ca_combo_training || needs_swap_rank_training) && dram_dev_num == TWO_RANK)
 		{
 
 			_ccfifo_write(EMC_ZQ_CAL, 0x40000001, 0);
 			_ccfifo_write(EMC_ZQ_CAL, 0x40000002, 1000000 / src_clock_period);
 		}
 
-		if (!needs_ca_or_cavref_training)
+		if (!needs_ca_combo_training)
 			_ccfifo_write(EMC_MRW3, (mr13_flip_fspop & 0xF3FFFFF7) ^ 0xC0000C0, 0);
 
 		_ccfifo_write(EMC_SELF_REF, 0, 0); // Was 0x100.
@@ -3487,13 +3498,10 @@ static u32 _minerva_set_clock(emc_table_t *src_emc_entry, emc_table_t *dst_emc_e
 	EMC(EMC_PMACRO_TRAINING_CTRL_1) = CH0_TRAINING_E_WRPTR;
 	EMC(EMC_PMACRO_CFG_PM_GLOBAL_0) = 0;
 
-	// Step 30 - Re-enable autocal and Restore FSP to account for switch back (training).
+	// Step 30 - Re-enable autocal.
 	EPRINTF("Step 30");
 	if (needs_tristate_training)
-	{
 		EMC(EMC_AUTO_CAL_CONFIG) = src_emc_entry->emc_auto_cal_config;
-		fsp_for_src_freq = !fsp_for_src_freq;
-	}
 	else
 	{
 		if (dst_emc_entry->burst_regs.emc_cfg_dig_dll_idx & 1)
@@ -3527,24 +3535,29 @@ static void _minerva_train_patterns(emc_table_t *src_emc_entry, emc_table_t *dst
 
 	if (!dst_emc_entry->trained)
 	{
-		if (needs_training & 3)
+		if (needs_training & NEEDS_TRAINING_CA_COMBO)
 		{
-			needs_training_emc_table[needs_training_idx++] = needs_training & 0x203;
+			needs_training_emc_table[needs_training_idx++] =
+				needs_training & (NEEDS_TRAINING_CA_COMBO | NEEDS_TRAINING_IN_SELF_REFRESH);
 			if (MC(MC_EMEM_ADR_CFG) & 1) // if mapping W8 (1KB page).
-				needs_training_emc_table[needs_training_idx++] = needs_training & 0x303;
+				needs_training_emc_table[needs_training_idx++] =
+					needs_training & (NEEDS_TRAINING_CA_COMBO | NEEDS_TRAINING_SWAP_RANK | NEEDS_TRAINING_IN_SELF_REFRESH);
 		}
 
-		if (needs_training & 0xC)
+		if (needs_training & NEEDS_TRAINING_QUSE_COMBO)
 		{
-			needs_training_emc_table[needs_training_idx++] = needs_training & 0x20C;
+			needs_training_emc_table[needs_training_idx++] =
+				needs_training & (NEEDS_TRAINING_QUSE_COMBO | NEEDS_TRAINING_IN_SELF_REFRESH);
 			if (MC(MC_EMEM_ADR_CFG) & 1)
-				needs_training_emc_table[needs_training_idx++] = needs_training & 0x204;
+				needs_training_emc_table[needs_training_idx++] =
+					needs_training & (NEEDS_TRAINING_QUSE | NEEDS_TRAINING_IN_SELF_REFRESH);
 		}
 
-		if (needs_training & 0xF0)
-			needs_training_emc_table[needs_training_idx++] = needs_training & 0x2F0;
+		if (needs_training & (NEEDS_TRAINING_WR_COMBO | NEEDS_TRAINING_RD_COMBO))
+			needs_training_emc_table[needs_training_idx++] =
+				needs_training & (NEEDS_TRAINING_WR_COMBO | NEEDS_TRAINING_RD_COMBO | NEEDS_TRAINING_IN_SELF_REFRESH);
 
-		for (u32 i = 0; needs_training_idx > i; i++) // Runs more than once for needs_training & 0xF
+		for (u32 i = 0; needs_training_idx > i; i++) // Runs more than once for needs_training CA/QUSE/WR/RD.
 		{
 			_minerva_set_clock(src_emc_entry, dst_emc_entry, needs_training_emc_table[i], selected_clk_src_emc);
 
@@ -3595,7 +3608,7 @@ void _minerva_do_over_temp_compensation(mtc_config_t *mtc_cfg)
 
 	u32 dram_temp = _get_dram_temperature();
 
-	if (mtc_cfg->prev_temp == dram_temp || dram_temp < 0)
+	if (mtc_cfg->prev_temp == dram_temp || dram_temp == (u32)-1)
 		return;
 
 	u32 refr = mtc_cfg->current_emc_table->burst_regs.emc_refresh_idx;
@@ -3717,8 +3730,9 @@ static u32 _minerva_set_rate(mtc_config_t *mtc_cfg)
 	u32 src_emc_entry_idx = 999;
 	u32 dst_emc_entry_idx = 999;
 	u32 selected_clk_src_emc;
-	u32 selected_emc_2x_clk_src;
+	u32 emc_clk_src;
 	bool freq_changed = false;
+	bool src_is_pllmb;
 	emc_table_t *src_emc_entry;
 	emc_table_t *dst_emc_entry;
 
@@ -3751,32 +3765,34 @@ static u32 _minerva_set_rate(mtc_config_t *mtc_cfg)
 	freq_changed = _check_freq_changed(dst_rate_khz, dst_clk_src_emc, src_rate_khz, src_clk_src_emc);
 	EPRINTFARGS("Requested freq change from %d to %d.", src_rate_khz, dst_rate_khz);
 
+	// Get current clock source.
+	emc_clk_src = CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_EMC) >> EMC_2X_CLK_SRC_SHIFT;
+	src_is_pllmb = emc_clk_src == PLLMB_UD || emc_clk_src == PLLMB_OUT0;
+
 	if (freq_changed)
 	{
-		selected_emc_2x_clk_src = src_clk_src_emc >> EMC_2X_CLK_SRC_SHIFT;
-		if (selected_emc_2x_clk_src & 3)
+		if (emc_clk_src == PLLM_UD ||
+			emc_clk_src == PLLM_OUT0) // Clock source is PLLM. Switch based on src_is_pllmb.
 		{
-			if (selected_emc_2x_clk_src - PLLMB_UD <= 1)
-				emc_2X_clk_src_is_pllmb = 0;
+			src_is_pllmb = !src_is_pllmb;
 		}
-		else
+		else if (emc_clk_src == PLLMB_UD ||
+				 emc_clk_src == PLLMB_OUT0) // Clock source is PLLMB. Switch to PLLM.
 		{
-			emc_2X_clk_src_is_pllmb = !emc_2X_clk_src_is_pllmb;
+			src_is_pllmb = false;
 		}
-		selected_clk_src_emc = _pllm_clk_base_cfg(dst_rate_khz, dst_clk_src_emc, emc_2X_clk_src_is_pllmb);
+		selected_clk_src_emc = _pllm_clk_base_cfg(dst_rate_khz, dst_clk_src_emc, src_is_pllmb);
 	}
 	else
 	{
 		selected_clk_src_emc = dst_clk_src_emc;
-		selected_emc_2x_clk_src = selected_clk_src_emc >> EMC_2X_CLK_SRC_SHIFT;
-		if (selected_emc_2x_clk_src != PLLMB_OUT0 && selected_emc_2x_clk_src)
+		emc_clk_src = selected_clk_src_emc >> EMC_2X_CLK_SRC_SHIFT;
+		if (src_is_pllmb)
 		{
-			if (selected_emc_2x_clk_src - PLLM_UD <= PLLC_OUT0 && emc_2X_clk_src_is_pllmb)
+			if (emc_clk_src == PLLM_UD || emc_clk_src == PLLMB_UD)
 				selected_clk_src_emc = (selected_clk_src_emc & 0x1FFFFFFF) | (PLLMB_UD << EMC_2X_CLK_SRC_SHIFT);
-		}
-		else if (emc_2X_clk_src_is_pllmb)
-		{
-			selected_clk_src_emc = (selected_clk_src_emc & 0x1FFFFFFF) | (PLLMB_OUT0 << EMC_2X_CLK_SRC_SHIFT);
+			else if (emc_clk_src == PLLM_OUT0 || emc_clk_src == PLLMB_OUT0)
+				selected_clk_src_emc = (selected_clk_src_emc & 0x1FFFFFFF) | (PLLMB_OUT0 << EMC_2X_CLK_SRC_SHIFT);
 		}
 	}
 
@@ -3791,8 +3807,6 @@ static u32 _minerva_set_rate(mtc_config_t *mtc_cfg)
 		return 0;
 	case OP_TRAIN:
 		_minerva_train_patterns(src_emc_entry, dst_emc_entry, false, selected_clk_src_emc);
-		if (freq_changed)
-			emc_2X_clk_src_is_pllmb = !emc_2X_clk_src_is_pllmb;
 		return 0;
 	case OP_TRAIN_SWITCH:
 		_minerva_train_patterns(src_emc_entry, dst_emc_entry, true, selected_clk_src_emc);
@@ -3830,8 +3844,6 @@ static void _minerva_get_table(mtc_config_t *mtc_cfg)
 	mtc_cfg->current_emc_table = NULL;
 
 	// Important!
-	mtc_cfg->emc_2X_clk_src_is_pllmb = false;
-	mtc_cfg->fsp_for_src_freq = false;
 	mtc_cfg->train_ram_patterns = true;
 	mtc_cfg->init_done = MTC_INIT_MAGIC;
 }
@@ -3841,8 +3853,6 @@ void _minerva_init(mtc_config_t *mtc_cfg, bdkParams_t bp)
 	EPRINTF("-- Minerva Training Cell --");
 
 	train_ram_patterns = mtc_cfg->train_ram_patterns;
-	fsp_for_src_freq = mtc_cfg->fsp_for_src_freq;
-	emc_2X_clk_src_is_pllmb = mtc_cfg->emc_2X_clk_src_is_pllmb;
 
 	if (mtc_cfg->init_done != MTC_INIT_MAGIC)
 	{
@@ -3902,6 +3912,4 @@ void _minerva_init(mtc_config_t *mtc_cfg, bdkParams_t bp)
 #endif
 
 	mtc_cfg->train_ram_patterns = train_ram_patterns;
-	mtc_cfg->fsp_for_src_freq = fsp_for_src_freq;
-	mtc_cfg->emc_2X_clk_src_is_pllmb = emc_2X_clk_src_is_pllmb;
 }
