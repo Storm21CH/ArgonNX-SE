@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018-2020 CTCaer
- * Copyright (c) 2020 Storm
+ * Copyright (c) 2018-2022 CTCaer
+ * Copyright (c) 2019-2022 Storm21
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -37,7 +37,6 @@ typedef enum
 typedef enum
 {
 	NYX_CFG_UMS  = BIT(6),
-	NYX_CFG_SEPT = BIT(7),
 
 	NYX_CFG_EXTRA = 0xFF << 24
 } nyx_cfg_t;
@@ -48,14 +47,10 @@ typedef enum
 	ERR_SYSOLD_NYX = BIT(1),
 	ERR_LIBSYS_MTC = BIT(2),
 	ERR_SD_BOOT_EN = BIT(3),
+	ERR_PANIC_CODE = BIT(4),
 	ERR_L4T_KERNEL = BIT(24),
 	ERR_EXCEPTION  = BIT(31),
 } hekate_errors_t;
-
-#define byte_swap_32(num) ((((num) >> 24) & 0xff) | (((num) << 8) & 0xff0000) | \
-						(((num) >> 8 )& 0xff00) | (((num) << 24) & 0xff000000))
-
-#define byte_swap_16(num) ((((num) >> 8) & 0xff) | (((num) << 8) & 0xff00))
 
 typedef struct _cfg_op_t
 {
@@ -79,7 +74,7 @@ typedef struct _nyx_storage_t
 	u32 cfg;
 	u8  irama[0x8000];
 	u8  hekate[0x30000];
-	u8  rsvd[0x800000 - sizeof(nyx_info_t)];
+	u8  rsvd[SZ_8M - sizeof(nyx_info_t)];
 	nyx_info_t info;
 	mtc_config_t mtc_cfg;
 	emc_table_t mtc_table[10];
@@ -87,6 +82,7 @@ typedef struct _nyx_storage_t
 
 u8   bit_count(u32 val);
 u32  bit_count_mask(u8 bits);
+char *strcpy_ns(char *dst, char *src);
 
 void exec_cfg(u32 *base, const cfg_op_t *ops, u32 num_ops);
 u32  crc32_calc(u32 crc, const u8 *buf, u32 len);
@@ -101,8 +97,7 @@ void panic(u32 val);
 void power_set_state(power_state_t state);
 void power_set_state_ex(void *param);
 
-//String Replace Replace a pattern of string for another string
-
 char* str_replace(char* orig, char* rep, char* with);
+
 
 #endif

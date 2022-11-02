@@ -1,5 +1,7 @@
 /*
  * Copyright (c) 2018 CTCaer
+ * Copyright (c) 2019-2022 Storm21
+ * 
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -21,9 +23,7 @@
 #include <mem/heap.h>
 #include <utils/types.h>
 
-
- //Dateien auflisten in Verzeichnis
-#define MAX_ENTRIES 255//#define MAX_ENTRIES 64
+#define MAX_ENTRIES 255
 
 char *dirlist(const char *directory, const char *pattern, bool includeHiddenFiles, bool parse_dirs)
 {

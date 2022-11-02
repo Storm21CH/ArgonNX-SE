@@ -1,7 +1,7 @@
 /*
  * Enhanced USB Device (EDCI) driver for Tegra X1
  *
- * Copyright (c) 2019-2020 CTCaer
+ * Copyright (c) 2019-2021 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -787,7 +787,7 @@ static int _usbd_ep_operation(usb_ep_t endpoint, u8 *buf, u32 len, u32 sync_time
 	if (direction == USB_DIR_IN)
 	{
 		prime_bit = USB2D_ENDPT_STATUS_TX_OFFSET << actual_ep;
-		bpmp_mmu_maintenance(BPMP_MMU_MAINT_CLN_INV_WAY, false);
+		bpmp_mmu_maintenance(BPMP_MMU_MAINT_CLEAN_WAY, false);
 	}
 	else
 		prime_bit = USB2D_ENDPT_STATUS_RX_OFFSET << actual_ep;
@@ -826,7 +826,7 @@ out:
 			res = USB_ERROR_XFER_ERROR;
 
 		if (direction == USB_DIR_OUT)
-			bpmp_mmu_maintenance(BPMP_MMU_MAINT_CLN_INV_WAY, false);
+			bpmp_mmu_maintenance(BPMP_MMU_MAINT_INVALID_WAY, false);
 	}
 
 	return res;
@@ -1455,7 +1455,7 @@ static int _usbd_get_ep1_out_bytes_read()
 		return (usbdaemon->ep_bytes_requested[USB_EP_BULK_OUT] - (usbdaemon->qhs[USB_EP_BULK_OUT].token >> 16));
 }
 
-int usb_device_ep1_out_reading_finish(u32 *pending_bytes)
+int usb_device_ep1_out_reading_finish(u32 *pending_bytes, u32 sync_timeout)
 {
 	usb_ep_status_t ep_status;
 	do
@@ -1470,7 +1470,7 @@ int usb_device_ep1_out_reading_finish(u32 *pending_bytes)
 
 	*pending_bytes = _usbd_get_ep1_out_bytes_read();
 
-	bpmp_mmu_maintenance(BPMP_MMU_MAINT_CLN_INV_WAY, false);
+	bpmp_mmu_maintenance(BPMP_MMU_MAINT_INVALID_WAY, false);
 
 	if (ep_status == USB_EP_STATUS_IDLE)
 		return USB_RES_OK;
@@ -1504,7 +1504,7 @@ static int _usbd_get_ep1_in_bytes_written()
 		return (usbdaemon->ep_bytes_requested[USB_EP_BULK_IN] - (usbdaemon->qhs[USB_EP_BULK_IN].token >> 16));
 }
 
-int usb_device_ep1_in_writing_finish(u32 *pending_bytes)
+int usb_device_ep1_in_writing_finish(u32 *pending_bytes, u32 sync_timeout)
 {
 	usb_ep_status_t ep_status;
 	do

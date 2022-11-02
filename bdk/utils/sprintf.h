@@ -17,8 +17,11 @@
 #ifndef _SPRINTF_H_
 #define _SPRINTF_H_
 
+#include <stdarg.h>
+
 #include <utils/types.h>
 
 void s_printf(char *out_buf, const char *fmt, ...);
+void s_vprintf(char *out_buf, const char *fmt, va_list ap);
 
 #endif

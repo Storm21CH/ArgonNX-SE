@@ -4,8 +4,8 @@
  * Copyright (c) 2003-2008 Alan Stern
  * Copyright (c) 2009 Samsung Electronics
  *                    Author: Michal Nazarewicz <m.nazarewicz@samsung.com>
- * Copyright (c) 2019-2020 CTCaer
- * Copyright (c) 2020 Storm
+ * Copyright (c) 2019-2022 CTCaer
+ * Copyright (c) 2019-2022 Storm21
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -26,7 +26,7 @@
 #include <gfx_utils.h>
 #include <soc/hw_init.h>
 #include <soc/t210.h>
-#include <storage/nx_sd.h>
+#include <storage/sd.h>
 #include <storage/sdmmc.h>
 #include <storage/sdmmc_driver.h>
 #include <utils/btn.h>
@@ -110,7 +110,7 @@
 #define SS_WRITE_ERROR                        0x30C02
 #define SS_WRITE_PROTECTED                    0x72700
 
-#define SK(x)   ((u8) ((x) >> 16)) /* Sense Key byte, etc. */
+#define SK(x)   ((u8) ((x) >> 16)) // Sense Key byte, etc.
 #define ASC(x)  ((u8) ((x) >> 8))
 #define ASCQ(x) ((u8) (x))
 
@@ -204,7 +204,7 @@ typedef struct _bulk_ctxt_t {
 typedef struct _usbd_gadget_ums_t {
 	bulk_ctxt_t bulk_ctxt;
 
-	int  cmnd_size;
+	u32  cmnd_size;
 	u8   cmnd[SCSI_MAX_CMD_SZ];
 
 	u32  lun_idx; // lun index
@@ -218,6 +218,7 @@ typedef struct _usbd_gadget_ums_t {
 	u32  tag;
 	u32  residue;
 	u32  usb_amount_left;
+	bool cbw_req_queued;
 
 	u32  phase_error;
 	u32  short_packet_received;
@@ -326,11 +327,11 @@ static void _ums_transfer_start(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt, 
 
 		if (bulk_ctxt->bulk_in_status == USB_ERROR_XFER_ERROR)
 		{
-			ums->set_text(ums->label, "#C7EA46 Error:# EP IN transfer!");
+			ums->set_text(ums->label, "#FFDD00 Error:# EP IN transfer!");
 			ums_flush_endpoint(bulk_ctxt->bulk_in);
 		}
 		else if (bulk_ctxt->bulk_in_status == USB2_ERROR_XFER_NOT_ALIGNED)
-			ums->set_text(ums->label, "#C7EA46 Error:# EP IN Buffer not aligned!");
+			ums->set_text(ums->label, "#FFDD00 Error:# EP IN Buffer not aligned!");
 
 		if (sync_timeout)
 			bulk_ctxt->bulk_in_buf_state = BUF_STATE_EMPTY;
@@ -343,11 +344,11 @@ static void _ums_transfer_start(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt, 
 
 		if (bulk_ctxt->bulk_out_status == USB_ERROR_XFER_ERROR)
 		{
-			ums->set_text(ums->label, "#C7EA46 Error:# EP OUT transfer!");
+			ums->set_text(ums->label, "#FFDD00 Error:# EP OUT transfer!");
 			ums_flush_endpoint(bulk_ctxt->bulk_out);
 		}
 		else if (bulk_ctxt->bulk_out_status == USB2_ERROR_XFER_NOT_ALIGNED)
-			ums->set_text(ums->label, "#C7EA46 Error:# EP OUT Buffer not aligned!");
+			ums->set_text(ums->label, "#FFDD00 Error:# EP OUT Buffer not aligned!");
 
 		if (sync_timeout)
 			bulk_ctxt->bulk_out_buf_state = BUF_STATE_FULL;
@@ -362,23 +363,23 @@ static void _ums_transfer_out_big_read(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk
 
 		if (bulk_ctxt->bulk_out_status == USB_ERROR_XFER_ERROR)
 		{
-			ums->set_text(ums->label, "#C7EA46 Error:# EP OUT transfer!");
+			ums->set_text(ums->label, "#FFDD00 Error:# EP OUT transfer!");
 			ums_flush_endpoint(bulk_ctxt->bulk_out);
 		}
 
 		bulk_ctxt->bulk_out_buf_state = BUF_STATE_FULL;
 }
 
-static void _ums_transfer_finish(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt, u32 ep)
+static void _ums_transfer_finish(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt, u32 ep, u32 sync_timeout)
 {
 	if (ep == bulk_ctxt->bulk_in)
 	{
 		bulk_ctxt->bulk_in_status = usb_ops.usb_device_ep1_in_writing_finish(
-			&bulk_ctxt->bulk_in_length_actual);
+			&bulk_ctxt->bulk_in_length_actual, sync_timeout);
 
 		if (bulk_ctxt->bulk_in_status == USB_ERROR_XFER_ERROR)
 		{
-			ums->set_text(ums->label, "#C7EA46 Error:# EP IN transfer!");
+			ums->set_text(ums->label, "#FFDD00 Error:# EP IN transfer!");
 			ums_flush_endpoint(bulk_ctxt->bulk_in);
 		}
 
@@ -387,11 +388,11 @@ static void _ums_transfer_finish(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt,
 	else
 	{
 		bulk_ctxt->bulk_out_status = usb_ops.usb_device_ep1_out_reading_finish(
-			&bulk_ctxt->bulk_out_length_actual);
+			&bulk_ctxt->bulk_out_length_actual, sync_timeout);
 
 		if (bulk_ctxt->bulk_out_status == USB_ERROR_XFER_ERROR)
 		{
-			ums->set_text(ums->label, "#C7EA46 Error:# EP OUT transfer!");
+			ums->set_text(ums->label, "#FFDD00 Error:# EP OUT transfer!");
 			ums_flush_endpoint(bulk_ctxt->bulk_out);
 		}
 
@@ -461,6 +462,7 @@ static int _scsi_read(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 	}
 	if (lba_offset >= ums->lun.num_sectors)
 	{
+		ums->set_text(ums->label, "#FF8000 Warn:# Read - Out of range! Host notified.");
 		ums->lun.sense_data = SS_LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
 
 		return UMS_RES_INVALID_ARG;
@@ -498,7 +500,7 @@ static int _scsi_read(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 
 		// Wait for the async USB transfer to finish.
 		if (!first_read)
-			_ums_transfer_finish(ums, bulk_ctxt, bulk_ctxt->bulk_in);
+			_ums_transfer_finish(ums, bulk_ctxt, bulk_ctxt->bulk_in, USB_XFER_SYNCED);
 
 		lba_offset   += amount;
 		amount_left  -= amount;
@@ -511,7 +513,7 @@ static int _scsi_read(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 		// If an error occurred, report it and its position.
 		if (!amount)
 		{
-			ums->set_text(ums->label, "#C7EA46 Error:# SDMMC Read!");
+			ums->set_text(ums->label, "#FFDD00 Error:# SDMMC Read!");
 			ums->lun.sense_data = SS_UNRECOVERED_READ_ERROR;
 			ums->lun.sense_data_info = lba_offset;
 			ums->lun.info_valid = 1;
@@ -549,6 +551,7 @@ static int _scsi_write(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 
 	if (ums->lun.ro)
 	{
+		ums->set_text(ums->label, "#FF8000 Warn:# Write - Read only! Host notified.");
 		ums->lun.sense_data = SS_WRITE_PROTECTED;
 
 		return UMS_RES_INVALID_ARG;
@@ -572,34 +575,33 @@ static int _scsi_write(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 	// Check that starting LBA is not past the end sector offset.
 	if (lba_offset >= ums->lun.num_sectors)
 	{
+		ums->set_text(ums->label, "#FF8000 Warn:# Write - Out of range! Host notified.");
 		ums->lun.sense_data = SS_LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
 
 		return UMS_RES_INVALID_ARG;
 	}
 
-	/* Carry out the file writes */
+	// Carry out the file writes.
 	usb_lba_offset = lba_offset;
 	amount_left_to_req = ums->data_size_from_cmnd;
 	amount_left_to_write = ums->data_size_from_cmnd;
 
 	while (amount_left_to_write > 0)
 	{
-
-		/* Queue a request for more data from the host */
-		if (amount_left_to_req)
+		// Queue a request for more data from the host.
+		if (amount_left_to_req > 0)
 		{
 
 			// Limit write to max supported read from EP OUT.
 			amount = MIN(amount_left_to_req, UMS_EP_OUT_MAX_XFER);
 
-			if (usb_lba_offset >= ums->lun.num_sectors) //////////Check if it works with concurrency
+			if (usb_lba_offset >= ums->lun.num_sectors)
 			{
-				ums->set_text(ums->label, "#C7EA46 Error:# Write - Past last sector!");
-				amount_left_to_req = 0;
+				ums->set_text(ums->label, "#FFDD00 Error:# Write - Past last sector!");
 				ums->lun.sense_data = SS_LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
 				ums->lun.sense_data_info = usb_lba_offset;
 				ums->lun.info_valid = 1;
-				continue;
+				break;
 			}
 
 			// Get the next buffer.
@@ -622,7 +624,7 @@ static int _scsi_write(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 				ums->lun.sense_data = SS_COMMUNICATION_FAILURE;
 				ums->lun.sense_data_info = lba_offset;
 				ums->lun.info_valid = 1;
-				s_printf(txt_buf, "#C7EA46 Error:# Write - Comm failure %d!", bulk_ctxt->bulk_out_status);
+				s_printf(txt_buf, "#FFDD00 Error:# Write - Comm failure %d!", bulk_ctxt->bulk_out_status);
 				ums->set_text(ums->label, txt_buf);
 				break;
 			}
@@ -641,12 +643,12 @@ static int _scsi_write(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 			 */
 			amount = MIN(amount, bulk_ctxt->bulk_out_length);
 
-			/* Don't write a partial block */
+			// Don't write a partial block.
 			amount -= (amount & 511);
 			if (amount == 0)
 				goto empty_write;
 
-			/* Perform the write */
+			// Perform the write.
 			if (!sdmmc_storage_write(ums->lun.storage, ums->lun.offset + lba_offset,
 				amount >> UMS_DISK_LBA_SHIFT, (u8 *)bulk_ctxt->bulk_out_buf))
 				amount = 0;
@@ -657,10 +659,10 @@ DPRINTF("file write %X @ %X\n", amount, lba_offset);
 			amount_left_to_write -= amount;
 			ums->residue         -= amount;
 
-			/* If an error occurred, report it and its position */
+			// If an error occurred, report it and its position.
 			if (!amount)
 			{
-				ums->set_text(ums->label, "#C7EA46 Error:# SDMMC Write!");
+				ums->set_text(ums->label, "#FFDD00 Error:# SDMMC Write!");
 				ums->lun.sense_data = SS_WRITE_ERROR;
 				ums->lun.sense_data_info = lba_offset;
 				ums->lun.info_valid = 1;
@@ -671,7 +673,7 @@ DPRINTF("file write %X @ %X\n", amount, lba_offset);
 			// Did the host decide to stop early?
 			if (bulk_ctxt->bulk_out_length_actual < bulk_ctxt->bulk_out_length)
 			{
-				ums->set_text(ums->label, "#C7EA46 Error:# Empty Write!");
+				ums->set_text(ums->label, "#FFDD00 Error:# Empty Write!");
 				ums->short_packet_received = 1;
 				break;
 			}
@@ -687,6 +689,7 @@ static int _scsi_verify(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 	u32 lba_offset = get_array_be_to_le32(&ums->cmnd[2]);
 	if (lba_offset >= ums->lun.num_sectors)
 	{
+		ums->set_text(ums->label, "#FF8000 Warn:# Verif - Out of range! Host notified.");
 		ums->lun.sense_data = SS_LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
 
 		return UMS_RES_INVALID_ARG;
@@ -725,7 +728,7 @@ DPRINTF("File read %X @ %X\n", amount, lba_offset);
 
 		if (!amount)
 		{
-			ums->set_text(ums->label, "#C7EA46 Error:# File verify!");
+			ums->set_text(ums->label, "#FFDD00 Error:# File verify!");
 			ums->lun.sense_data = SS_UNRECOVERED_READ_ERROR;
 			ums->lun.sense_data_info = lba_offset;
 			ums->lun.info_valid = 1;
@@ -1008,7 +1011,7 @@ static int _scsi_mode_sense(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 		return UMS_RES_INVALID_ARG;
 	}
 
-	/*  Store the mode data length */
+	//  Store the mode data length.
 	if (ums->cmnd[0] == SC_MODE_SENSE_6)
 		buf0[0] = len - 1;
 	else
@@ -1090,8 +1093,7 @@ static int _scsi_prevent_allow_removal(usbd_gadget_ums_t *ums)
 
 	// Notify for possible unmounting?
 	// Normally we sync here but we do synced writes to SDMMC.
-	if (ums->lun.prevent_medium_removal && !prevent)
-		;
+	if (ums->lun.prevent_medium_removal && !prevent) { /* Do nothing */ }
 
 	ums->lun.prevent_medium_removal = prevent;
 
@@ -1115,7 +1117,7 @@ static int _scsi_read_format_capacities(usbd_gadget_ums_t *ums, bulk_ctxt_t *bul
 
 // Check whether the command is properly formed and whether its data size
 // and direction agree with the values we already have.
-static int _ums_check_scsi_cmd(usbd_gadget_ums_t *ums, int cmnd_size,
+static int _ums_check_scsi_cmd(usbd_gadget_ums_t *ums, u32 cmnd_size,
 	enum data_direction data_dir, u32 mask, int needs_medium)
 {
 //const char dirletter[4] = {'u', 'o', 'i', 'n'};
@@ -1462,7 +1464,7 @@ static int finish_reply(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 		{
 			ums_set_stall(bulk_ctxt->bulk_out);
 			rc = ums_set_stall(bulk_ctxt->bulk_in);
-			ums->set_text(ums->label, "#C7EA46 Error:# Direction unknown. Stalled both EP!");
+			ums->set_text(ums->label, "#FFDD00 Error:# Direction unknown. Stalled both EP!");
 		} // Else do nothing.
 		break;
 
@@ -1483,7 +1485,7 @@ static int finish_reply(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 			{
 				_ums_transfer_start(ums, bulk_ctxt, bulk_ctxt->bulk_in, USB_XFER_SYNCED_DATA);
 				rc = ums_set_stall(bulk_ctxt->bulk_in);
-				ums->set_text(ums->label, "#C7EA46 Error:# Residue. Stalled EP IN!");
+				ums->set_text(ums->label, "#FFDD00 Error:# Residue. Stalled EP IN!");
 			}
 			else
 				rc = pad_with_zeros(ums, bulk_ctxt);
@@ -1541,12 +1543,12 @@ static int finish_reply(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 
 static int received_cbw(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 {
-	/* Was this a real packet?  Should it be ignored? */
+	// Was this a real packet?  Should it be ignored?
 	if (bulk_ctxt->bulk_out_status || bulk_ctxt->bulk_out_ignore || ums->lun.unmounted)
 	{
 		if (bulk_ctxt->bulk_out_status || ums->lun.unmounted)
 		{
-			DPRINTF("USB: EP timeout\n");
+			DPRINTF("USB: EP timeout (%d)\n", bulk_ctxt->bulk_out_status);
 			// In case we disconnected, exit UMS.
 			// Raise timeout if removable and didn't got a unit ready command inside 4s.
 			if (bulk_ctxt->bulk_out_status == USB2_ERROR_XFER_EP_DISABLED ||
@@ -1577,6 +1579,8 @@ static int received_cbw(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 			{
 				ums->set_text(ums->label, "#C7EA46 Status:# #FFFFFF Medium unmounted#");
 				ums->timeouts++;
+				if (!bulk_ctxt->bulk_out_status)
+					ums->timeouts += 3;
 			}
 
 			if (ums->timeouts > 20)
@@ -1587,29 +1591,34 @@ static int received_cbw(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 			return UMS_RES_INVALID_ARG;
 	}
 
-	/* Is the CBW valid? */
+	// Clear request flag to allow a new one to be queued.
+	ums->cbw_req_queued = false;
+
+	// Is the CBW valid?
 	bulk_recv_pkt_t *cbw = (bulk_recv_pkt_t *)bulk_ctxt->bulk_out_buf;
 	if (bulk_ctxt->bulk_out_length_actual != USB_BULK_CB_WRAP_LEN || cbw->Signature != USB_BULK_CB_SIG)
 	{
 		gfx_printf("USB: invalid CBW: len %X sig 0x%X\n", bulk_ctxt->bulk_out_length_actual, cbw->Signature);
 
-		 // The Bulk-only spec says we MUST stall the IN endpoint
-		 // (6.6.1), so it's unavoidable.  It also says we must
-		 // retain this state until the next reset, but there's
-		 // no way to tell the controller driver it should ignore
-		 // Clear-Feature(HALT) requests.
-		 //
-		 // We aren't required to halt the OUT endpoint; instead
-		 // we can simply accept and discard any data received
-		 // until the next reset.
+		/*
+		 * The Bulk-only spec says we MUST stall the IN endpoint
+		 * (6.6.1), so it's unavoidable.  It also says we must
+		 * retain this state until the next reset, but there's
+		 * no way to tell the controller driver it should ignore
+		 * Clear-Feature(HALT) requests.
+		 *
+		 * We aren't required to halt the OUT endpoint; instead
+		 * we can simply accept and discard any data received
+		 * until the next reset.
+		 */
 		ums_wedge_bulk_in_endpoint(ums);
 		bulk_ctxt->bulk_out_ignore = 1;
 		return UMS_RES_INVALID_ARG;
 	}
 
-	/* Is the CBW meaningful? */
+	// Is the CBW meaningful?
 	if (cbw->Lun >= UMS_MAX_LUN || cbw->Flags & ~USB_BULK_IN_FLAG ||
-			cbw->Length <= 0 || cbw->Length > SCSI_MAX_CMD_SZ)
+			cbw->Length == 0 || cbw->Length > SCSI_MAX_CMD_SZ)
 	{
 		gfx_printf("USB: non-meaningful CBW: lun = %X, flags = 0x%X, cmdlen %X\n",
 			cbw->Lun, cbw->Flags, cbw->Length);
@@ -1620,13 +1629,13 @@ static int received_cbw(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 		{
 			ums_set_stall(bulk_ctxt->bulk_out);
 			ums_set_stall(bulk_ctxt->bulk_in);
-			ums->set_text(ums->label, "#C7EA46 Status:# #FFFFFF CBW unknown - Stalled both EP#");
+			ums->set_text(ums->label, "C7EA46 Status:# #FFFFFF CBW unknown - Stalled both EP#");
 		}
 
 		return UMS_RES_INVALID_ARG;
 	}
 
-	/* Save the command for later */
+	// Save the command for later.
 	ums->cmnd_size = cbw->Length;
 	memcpy(ums->cmnd, cbw->CDB, ums->cmnd_size);
 
@@ -1661,8 +1670,20 @@ static int get_next_command(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 
 	bulk_ctxt->bulk_out_length = USB_BULK_CB_WRAP_LEN;
 
-	/* Queue a request to read a Bulk-only CBW */
-	_ums_transfer_start(ums, bulk_ctxt, bulk_ctxt->bulk_out, USB_XFER_SYNCED_CMD);
+	// Queue a request to read a Bulk-only CBW.
+	if (!ums->cbw_req_queued)
+		_ums_transfer_start(ums, bulk_ctxt, bulk_ctxt->bulk_out, USB_XFER_SYNCED_CMD);
+	else
+		_ums_transfer_finish(ums, bulk_ctxt, bulk_ctxt->bulk_out, USB_XFER_SYNCED_CMD);
+
+	/*
+	 * On XUSB do not allow multiple requests for CBW to be done.
+	 * This avoids an issue with some XHCI controllers and OS combos (e.g. ASMedia and Linux/Mac OS)
+	 * which confuse that and concatenate an old CBW request with another write request (SCSI Write)
+	 * and create a babble error (transmit overflow).
+	 */
+	if (ums->xusb)
+		ums->cbw_req_queued = true;
 
 	/* We will drain the buffer in software, which means we
 	 * can reuse it for the next filling.  No need to advance
@@ -1687,7 +1708,7 @@ static void send_status(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 
 	if (ums->phase_error)
 	{
-		ums->set_text(ums->label, "#C7EA46 Error:# Phase-error!");
+		ums->set_text(ums->label, "#FFDD00 Error:# Phase-error!");
 		status = USB_STATUS_PHASE_ERROR;
 		sd = SS_INVALID_COMMAND;
 	}
@@ -1699,7 +1720,7 @@ static void send_status(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 			SK(sd), ASC(sd), ASCQ(sd), ums->lun.sense_data_info);
 	}
 
-	/* Store and send the Bulk-only CSW */
+	// Store and send the Bulk-only CSW.
 	bulk_send_pkt_t *csw = (bulk_send_pkt_t *)bulk_ctxt->bulk_in_buf;
 
 	csw->Signature = USB_BULK_CS_SIG;
@@ -1715,7 +1736,7 @@ static void handle_exception(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 {
 	enum ums_state old_state;
 
-	/* Clear out the controller's fifos */
+	// Clear out the controller's fifos.
 	ums_flush_endpoint(bulk_ctxt->bulk_in);
 	ums_flush_endpoint(bulk_ctxt->bulk_out);
 
@@ -1738,7 +1759,7 @@ static void handle_exception(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 
 	ums->state = UMS_STATE_NORMAL;
 
-	/* Carry out any extra actions required for the exception */
+	// Carry out any extra actions required for the exception.
 	switch (old_state)
 	{
 	case UMS_STATE_NORMAL:
@@ -1760,7 +1781,7 @@ static void handle_exception(usbd_gadget_ums_t *ums, bulk_ctxt_t *bulk_ctxt)
 		break;
 
 	case UMS_STATE_EXIT:
-		ums->state = UMS_STATE_TERMINATED;	/* Stop the thread */
+		ums->state = UMS_STATE_TERMINATED;	// Stop the thread.
 		break;
 
 	default:
@@ -1790,8 +1811,6 @@ static inline void _system_maintainance(usbd_gadget_ums_t *ums)
 int usb_device_gadget_ums(usb_ctxt_t *usbs)
 {
 	int res = 0;
-	sdmmc_t sdmmc;
-	sdmmc_storage_t storage;
 	usbd_gadget_ums_t ums = {0};
 
 	// Get USB Controller ops.
@@ -1838,6 +1857,7 @@ int usb_device_gadget_ums(usb_ctxt_t *usbs)
 	// Initialize sdmmc.
 	if (usbs->type == MMC_SD)
 	{
+		sd_end();
 		sd_mount();
 		sd_unmount();
 		ums.lun.sdmmc = &sd_sdmmc;
@@ -1845,9 +1865,9 @@ int usb_device_gadget_ums(usb_ctxt_t *usbs)
 	}
 	else
 	{
-		ums.lun.sdmmc = &sdmmc;
-		ums.lun.storage = &storage;
-		sdmmc_storage_init_mmc(ums.lun.storage, ums.lun.sdmmc, SDMMC_BUS_WIDTH_8, SDHCI_TIMING_MMC_HS400);
+		ums.lun.sdmmc = &emmc_sdmmc;
+		ums.lun.storage = &emmc_storage;
+		emmc_initialize(false);
 		sdmmc_storage_set_mmc_partition(ums.lun.storage, ums.lun.partition - 1);
 	}
 
@@ -1908,7 +1928,10 @@ int usb_device_gadget_ums(usb_ctxt_t *usbs)
 		send_status(&ums, &ums.bulk_ctxt);
 	} while (ums.state != UMS_STATE_TERMINATED);
 
-	ums.set_text(ums.label, "#C7EA46 Status:# #FFFFFF Disk ejected#");
+	if (ums.lun.prevent_medium_removal)
+		ums.set_text(ums.label, "#FFDD00 Error:# #FFFFFF Disk unsafely ejected#");
+	else
+		ums.set_text(ums.label, "#C7EA46 Status:# #FFFFFF Disk ejected#");
 	goto exit;
 
 error:

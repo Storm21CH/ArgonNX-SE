@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018 naehrwert
  * Copyright (c) 2018-2021 CTCaer
+ * Copyright (c) 2019-2022 Storm21
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -3274,7 +3275,6 @@ static FRESULT find_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 		stat = disk_status(fs->pdrv);
 		if (!(stat & STA_NOINIT)) {		/* and the physical drive is kept initialized */
 			if (!FF_FS_READONLY && mode && (stat & STA_PROTECT)) {	/* Check write protection if needed */
-				EFSPRINTF("WPEN1");
 				return FR_WRITE_PROTECTED;
 			}
 			return FR_OK;				/* The filesystem object is valid */
@@ -3289,11 +3289,9 @@ static FRESULT find_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 	fs->pdrv = LD2PD(vol);				/* Bind the logical drive and a physical drive */
 	stat = disk_initialize(fs->pdrv);	/* Initialize the physical drive */
 	if (stat & STA_NOINIT) { 			/* Check if the initialization succeeded */
-		EFSPRINTF("MDNR");
 		return FR_NOT_READY;			/* Failed to initialize due to no medium or hard error */
 	}
 	if (!FF_FS_READONLY && mode && (stat & STA_PROTECT)) { /* Check disk write protection if needed */
-		EFSPRINTF("WPEN2");
 		return FR_WRITE_PROTECTED;
 	}
 #if FF_MAX_SS != FF_MIN_SS				/* Get sector size (multiple sector size cfg only) */
@@ -4712,9 +4710,9 @@ DWORD *f_expand_cltbl (
 	}
 	if (f_lseek(fp, CREATE_LINKMAP)) {	/* Create cluster link table */
 		ff_memfree(fp->cltbl);
-		fp->cltbl = NULL;
+		fp->cltbl = (void *)0;
 		EFSPRINTF("CLTBLSZ");
-		return NULL;
+		return (void *)0;
 	}
 	f_lseek(fp, 0);
 
@@ -5151,7 +5149,7 @@ FRESULT f_unlink (
 						res = dir_sdi(&sdj, 0);
 						if (res == FR_OK) {
 							res = DIR_READ_FILE(&sdj);			/* Test if the directory is empty */
-							if (res == FR_OK) res = FR_OK;	// Not empty? Copyright(c) 2019 Storm, if (res == FR_OK) res = FR_DENIED;	// Not empty? //geändert in FR_OK
+							if (res == FR_OK) res = FR_OK;	// Not empty? 2019 Storm, if (res == FR_OK) res = FR_DENIED;	// Not empty? //geändert in FR_OK
 							if (res == FR_NO_FILE) res = FR_OK;	/* Empty? */
 						}
 					}
@@ -6231,8 +6229,13 @@ FRESULT f_mkfs (
 			mem_set(buf, 0, ss);
 			st_dword(buf + FSI_LeadSig, 0x41615252);
 			st_dword(buf + FSI_StrucSig, 0x61417272);
-			st_dword(buf + FSI_Free_Count, n_clst - 1);	/* Number of free clusters */
-			st_dword(buf + FSI_Nxt_Free, 2);			/* Last allocated cluster# */
+			if (opt & FM_PRF2) {
+				st_dword(buf + FSI_Free_Count, 0xFFFFFFFF);	/* Invalidate free count */
+				st_dword(buf + FSI_Nxt_Free, 0xFFFFFFFF);	/* Invalidate last allocated cluster */
+			} else {
+				st_dword(buf + FSI_Free_Count, n_clst - 1);	/* Number of free clusters */
+				st_dword(buf + FSI_Nxt_Free, 2);			/* Last allocated cluster# */
+			}
 			st_word(buf + BS_55AA, 0xAA55);
 			disk_write(pdrv, buf, b_vol + 7, 1);		/* Write backup FSINFO (VBR + 7) */
 			disk_write(pdrv, buf, b_vol + 1, 1);		/* Write original FSINFO (VBR + 1) */
@@ -6241,11 +6244,18 @@ FRESULT f_mkfs (
 		/* Create PRF2SAFE info */
 		if (fmt == FS_FAT32 && opt & FM_PRF2) {
 			mem_set(buf, 0, ss);
-			buf[16] = 0x64;							/* Record type */
-			st_dword(buf + 32, 0x03);				/* Unknown. SYSTEM: 0x3F00. USER: 0x03. Volatile. */
-			st_dword(buf + 36, 25);					/* Entries. SYSTEM: 22. USER: 25.Static? */
-			st_dword(buf + 508, 0x517BBFE0);		/* Custom CRC32. SYSTEM: 0x6B673904. USER: 0x517BBFE0. */
-			disk_write(pdrv, buf, b_vol + 3, 1);	/* Write PRF2SAFE info (VBR + 3) */
+			st_dword(buf + 0, 0x32465250);				/* Magic PRF2 */
+			st_dword(buf + 4, 0x45464153);				/* Magic SAFE */
+			buf[16] = 0x64;									/* Record type */
+			st_dword(buf + 32, 0x03);						/* Unknown. SYSTEM: 0x3F00. USER: 0x03. Volatile. */
+			if (sz_vol < 0x1000000) {
+				st_dword(buf + 36, 21 + 1);				/* 22 Entries. */
+				st_dword(buf + 508, 0x90BB2F39);			/* Sector CRC32 */
+			} else {
+				st_dword(buf + 36, 21 + 2);				/* 23 Entries. */
+				st_dword(buf + 508, 0x5EA8AFC8);			/* Sector CRC32 */
+			}
+			disk_write(pdrv, buf, b_vol + 3, 1);		/* Write PRF2SAFE info (VBR + 3) */
 		}
 
 		/* Initialize FAT area */
@@ -6737,6 +6747,8 @@ int f_puts (
 	putbuff pb;
 
 
+	if (str == (void *)0) return EOF; /* String is NULL */
+
 	putc_init(&pb, fp);
 	while (*str) putc_bfd(&pb, *str++);		/* Put the string */
 	return putc_flush(&pb);
@@ -6762,6 +6774,8 @@ int f_printf (
 	DWORD v;
 	TCHAR c, d, str[32], *p;
 
+
+	if (fmt == (void *)0) return EOF; /* String is NULL */
 
 	putc_init(&pb, fp);
 

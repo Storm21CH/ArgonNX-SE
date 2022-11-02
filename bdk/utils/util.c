@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018-2020 CTCaer
- * Copyright (c) 2020 Storm
+* Copyright (c) 2018 naehrwert
+* Copyright (c) 2018-2022 CTCaer
+* Copyright (c) 2019-2022 Storm21
 *
 * This program is free software; you can redistribute it and/or modify it
 * under the terms and conditions of the GNU General Public License,
@@ -16,7 +16,8 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <utils/util.h>
+#include <string.h>
+
 #include <mem/heap.h>
 #include <power/max77620.h>
 #include <rtc/max77620-rtc.h>
@@ -25,7 +26,8 @@
 #include <soc/i2c.h>
 #include <soc/pmc.h>
 #include <soc/t210.h>
-#include <storage/nx_sd.h>
+#include <storage/sd.h>
+#include <utils/util.h>
 
 #define USE_RTC_TIMER
 
@@ -50,6 +52,28 @@ u32 bit_count_mask(u8 bits)
 		val |= 1 << i;
 
 	return val;
+}
+
+char *strcpy_ns(char *dst, char *src)
+{
+	if (!src || !dst)
+		return NULL;
+
+	// Remove starting space.
+	u32 len = strlen(src);
+	if (len && src[0] == ' ')
+	{
+		len--;
+		src++;
+	}
+
+	strcpy(dst, src);
+
+	// Remove trailing space.
+	if (len && dst[len - 1] == ' ')
+		dst[len - 1] = 0;
+
+	return dst;
 }
 
 u32 get_tmr_s()
@@ -210,7 +234,6 @@ void power_set_state_ex(void *param)
 	power_set_state(*state);
 }
 
-//String Replace
 #include <string.h>
 
 char* str_replace(char* orig, char* rep, char* with)
