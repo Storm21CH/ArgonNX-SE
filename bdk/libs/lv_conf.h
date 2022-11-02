@@ -183,8 +183,6 @@
  *================*/
 #define LV_THEME_LIVE_UPDATE    0       /*1: Allow theme switching at run time. Uses 8..10 kB of RAM*/
 
-//#define USE_LV_THEME_HEKATE     1       //Flat theme with bold colors and light shadows hekate orginal
-
 #define USE_LV_THEME_STORM     1       //Theme initialisieren Funktioniert, muss auch in Makefile!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
@@ -203,19 +201,14 @@
  * To enable a built-in font use 1,2,4 or 8 values
  * which will determine the bit-per-pixel. Higher value means smoother fonts */
 #define LV_FONT_QUALITY 8
-
 #define USE_UBUNTU_MONO            LV_FONT_QUALITY
-
 #define USE_INTERUI_20             LV_FONT_QUALITY
 #define USE_INTERUI_30             LV_FONT_QUALITY
-
 #define USE_HEKATE_SYMBOL_20       USE_INTERUI_20
 #define USE_HEKATE_SYMBOL_30       USE_INTERUI_30
 #define USE_HEKATE_SYMBOL_120      LV_FONT_QUALITY
-
-
-#define USE_MABOLT_12      2//Font converter 5.3 Range html code Zeichen z.B. 32-127
-#define USE_NUM_110      2//Font converter 5.3 Range html code Zeichen z.B. 46-58 Qualität wirkt sich sehr auf die payload grösse aus, 2 ist optisch ok und ca. 15Kb
+#define USE_MABOLT_12      2
+#define USE_NUM_110      2
 
 
 
