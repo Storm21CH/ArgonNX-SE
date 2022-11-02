@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018-2021 CTCaer
+ * Copyright (c) 2018-2022 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -18,9 +18,10 @@
 #include <string.h>
 
 #include "se.h"
-#include "se_t210.h"
+#include <memory_map.h>
 #include <mem/heap.h>
 #include <soc/bpmp.h>
+#include <soc/hw_init.h>
 #include <soc/pmc.h>
 #include <soc/t210.h>
 #include <utils/util.h>
@@ -31,6 +32,8 @@ typedef struct _se_ll_t
 	vu32 addr;
 	vu32 size;
 } se_ll_t;
+
+se_ll_t *ll_dst, *ll_src;
 
 static void _gf256_mul_x(void *block)
 {
@@ -48,6 +51,22 @@ static void _gf256_mul_x(void *block)
 		pdata[0xF] ^= 0x87;
 }
 
+static void _gf256_mul_x_le(void *block)
+{
+	u32 *pdata = (u32 *)block;
+	u32 carry = 0;
+
+	for (u32 i = 0; i < 4; i++)
+	{
+		u32 b = pdata[i];
+		pdata[i] = (b << 1) | carry;
+		carry = b >> 31;
+	}
+
+	if (carry)
+		pdata[0x0] ^= 0x87;
+}
+
 static void _se_ll_init(se_ll_t *ll, u32 addr, u32 size)
 {
 	ll->num = 0;
@@ -63,16 +82,46 @@ static void _se_ll_set(se_ll_t *dst, se_ll_t *src)
 
 static int _se_wait()
 {
+	bool tegra_t210 = hw_get_chip_id() == GP_HIDREV_MAJOR_T210;
+
+	// Wait for operation to be done.
 	while (!(SE(SE_INT_STATUS_REG) & SE_INT_OP_DONE))
 		;
-	if (SE(SE_INT_STATUS_REG) & SE_INT_ERR_STAT ||
-	   (SE(SE_STATUS_REG) & SE_STATUS_STATE_MASK) != SE_STATUS_STATE_IDLE ||
-		SE(SE_ERR_STATUS_REG) != 0)
+
+	// Check for errors.
+	if ((SE(SE_INT_STATUS_REG) & SE_INT_ERR_STAT) ||
+		(SE(SE_STATUS_REG) & SE_STATUS_STATE_MASK) != SE_STATUS_STATE_IDLE ||
+		 SE(SE_ERR_STATUS_REG) != 0)
 		return 0;
+
+	// T210B01: IRAM/TZRAM/DRAM AHB coherency WAR.
+	if (!tegra_t210 && ll_dst)
+	{
+		u32 timeout = get_tmr_us() + 1000000;
+		// Ensure data is out from SE.
+		while (SE(SE_STATUS_REG) & SE_STATUS_MEM_IF_BUSY)
+		{
+			if (get_tmr_us() > timeout)
+				return 0;
+			usleep(1);
+		}
+
+		// Ensure data is out from AHB.
+		if(ll_dst->addr >= DRAM_START)
+		{
+			timeout = get_tmr_us() + 200000;
+			while (AHB_GIZMO(AHB_ARBITRATION_AHB_MEM_WRQUE_MST_ID) & MEM_WRQUE_SE_MST_ID)
+			{
+				if (get_tmr_us() > timeout)
+					return 0;
+				usleep(1);
+			}
+		}
+	}
+
 	return 1;
 }
 
-se_ll_t *ll_dst, *ll_src;
 static int _se_execute(u32 op, void *dst, u32 dst_size, const void *src, u32 src_size, bool is_oneshot)
 {
 	ll_dst = NULL;
@@ -95,7 +144,8 @@ static int _se_execute(u32 op, void *dst, u32 dst_size, const void *src, u32 src
 	SE(SE_ERR_STATUS_REG) = SE(SE_ERR_STATUS_REG);
 	SE(SE_INT_STATUS_REG) = SE(SE_INT_STATUS_REG);
 
-	bpmp_mmu_maintenance(BPMP_MMU_MAINT_CLN_INV_WAY, false);
+	// Flush data before starting OP.
+	bpmp_mmu_maintenance(BPMP_MMU_MAINT_CLEAN_WAY, false);
 
 	SE(SE_OPERATION_REG) = op;
 
@@ -103,12 +153,19 @@ static int _se_execute(u32 op, void *dst, u32 dst_size, const void *src, u32 src
 	{
 		int res = _se_wait();
 
-		bpmp_mmu_maintenance(BPMP_MMU_MAINT_CLN_INV_WAY, false);
+		// Invalidate data after OP is done.
+		bpmp_mmu_maintenance(BPMP_MMU_MAINT_INVALID_WAY, false);
 
 		if (src)
+		{
 			free(ll_src);
+			ll_src = NULL;
+		}
 		if (dst)
+		{
 			free(ll_dst);
+			ll_dst = NULL;
+		}
 
 		return res;
 	}
@@ -120,7 +177,8 @@ static int _se_execute_finalize()
 {
 	int res = _se_wait();
 
-	bpmp_mmu_maintenance(BPMP_MMU_MAINT_CLN_INV_WAY, false);
+	// Invalidate data after OP is done.
+	bpmp_mmu_maintenance(BPMP_MMU_MAINT_INVALID_WAY, false);
 
 	if (ll_src)
 	{
@@ -322,7 +380,7 @@ int se_aes_crypt_ctr(u32 ks, void *dst, u32 dst_size, const void *src, u32 src_s
 	return 1;
 }
 
-int se_aes_xts_crypt_sec(u32 ks1, u32 ks2, u32 enc, u64 sec, void *dst, void *src, u32 secsize)
+int se_aes_xts_crypt_sec(u32 tweak_ks, u32 crypt_ks, u32 enc, u64 sec, void *dst, void *src, u32 secsize)
 {
 	int res = 0;
 	u8 *tweak = (u8 *)malloc(SE_AES_BLOCK_SIZE);
@@ -335,7 +393,7 @@ int se_aes_xts_crypt_sec(u32 ks1, u32 ks2, u32 enc, u64 sec, void *dst, void *sr
 		tweak[i] = sec & 0xFF;
 		sec >>= 8;
 	}
-	if (!se_aes_crypt_block_ecb(ks1, 1, tweak, tweak))
+	if (!se_aes_crypt_block_ecb(tweak_ks, ENCRYPT, tweak, tweak))
 		goto out;
 
 	// We are assuming a 0x10-aligned sector size in this implementation.
@@ -343,7 +401,7 @@ int se_aes_xts_crypt_sec(u32 ks1, u32 ks2, u32 enc, u64 sec, void *dst, void *sr
 	{
 		for (u32 j = 0; j < SE_AES_BLOCK_SIZE; j++)
 			pdst[j] = psrc[j] ^ tweak[j];
-		if (!se_aes_crypt_block_ecb(ks2, enc, pdst, pdst))
+		if (!se_aes_crypt_block_ecb(crypt_ks, enc, pdst, pdst))
 			goto out;
 		for (u32 j = 0; j < SE_AES_BLOCK_SIZE; j++)
 			pdst[j] = pdst[j] ^ tweak[j];
@@ -359,13 +417,65 @@ out:;
 	return res;
 }
 
-int se_aes_xts_crypt(u32 ks1, u32 ks2, u32 enc, u64 sec, void *dst, void *src, u32 secsize, u32 num_secs)
+int se_aes_xts_crypt_sec_nx(u32 tweak_ks, u32 crypt_ks, u32 enc, u64 sec, u8 *tweak, bool regen_tweak, u32 tweak_exp, void *dst, void *src, u32 sec_size)
+{
+	u32 *pdst = (u32 *)dst;
+	u32 *psrc = (u32 *)src;
+	u32 *ptweak = (u32 *)tweak;
+
+	if (regen_tweak)
+	{
+		for (int i = 0xF; i >= 0; i--)
+		{
+			tweak[i] = sec & 0xFF;
+			sec >>= 8;
+		}
+		if (!se_aes_crypt_block_ecb(tweak_ks, ENCRYPT, tweak, tweak))
+			return 0;
+	}
+
+	// tweak_exp allows using a saved tweak to reduce _gf256_mul_x_le calls.
+	for (u32 i = 0; i < (tweak_exp << 5); i++)
+		_gf256_mul_x_le(tweak);
+
+	u8 orig_tweak[SE_KEY_128_SIZE] __attribute__((aligned(4)));
+	memcpy(orig_tweak, tweak, SE_KEY_128_SIZE);
+
+	// We are assuming a 16 sector aligned size in this implementation.
+	for (u32 i = 0; i < (sec_size >> 4); i++)
+	{
+		for (u32 j = 0; j < 4; j++)
+			pdst[j] = psrc[j] ^ ptweak[j];
+
+		_gf256_mul_x_le(tweak);
+		psrc += 4;
+		pdst += 4;
+	}
+
+	if (!se_aes_crypt_ecb(crypt_ks, enc, dst, sec_size, dst, sec_size))
+		return 0;
+
+	pdst = (u32 *)dst;
+	ptweak = (u32 *)orig_tweak;
+	for (u32 i = 0; i < (sec_size >> 4); i++)
+	{
+		for (u32 j = 0; j < 4; j++)
+			pdst[j] = pdst[j] ^ ptweak[j];
+
+		_gf256_mul_x_le(orig_tweak);
+		pdst += 4;
+	}
+
+	return 1;
+}
+
+int se_aes_xts_crypt(u32 tweak_ks, u32 crypt_ks, u32 enc, u64 sec, void *dst, void *src, u32 secsize, u32 num_secs)
 {
 	u8 *pdst = (u8 *)dst;
 	u8 *psrc = (u8 *)src;
 
 	for (u32 i = 0; i < num_secs; i++)
-		if (!se_aes_xts_crypt_sec(ks1, ks2, enc, sec + i, pdst + secsize * i, psrc + secsize * i, secsize))
+		if (!se_aes_xts_crypt_sec(tweak_ks, crypt_ks, enc, sec + i, pdst + secsize * i, psrc + secsize * i, secsize))
 			return 0;
 
 	return 1;
@@ -529,6 +639,6 @@ void se_get_aes_keys(u8 *buf, u8 *keys, u32 keysize)
 	// Decrypt context.
 	se_aes_key_clear(3);
 	se_aes_key_set(3, srk, SE_KEY_128_SIZE);
-	se_aes_crypt_cbc(3, 0, keys, SE_AES_KEYSLOT_COUNT * keysize, keys, SE_AES_KEYSLOT_COUNT * keysize);
+	se_aes_crypt_cbc(3, DECRYPT, keys, SE_AES_KEYSLOT_COUNT * keysize, keys, SE_AES_KEYSLOT_COUNT * keysize);
 	se_aes_key_clear(3);
 }

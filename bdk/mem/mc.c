@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018 naehrwert
- * Copyright (c) 2018-2020 CTCaer
+ * Copyright (c) 2018-2021 CTCaer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -15,12 +15,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <memory_map.h>
 #include <mem/mc.h>
 #include <soc/t210.h>
 #include <soc/clock.h>
 #include <utils/util.h>
-
-//#define CONFIG_ENABLE_AHB_REDIRECT
 
 void mc_config_tsec_carveout(u32 bom, u32 size1mb, bool lock)
 {
@@ -127,10 +126,10 @@ void mc_config_carveout()
 void mc_enable_ahb_redirect()
 {
 	// Enable ARC_CLK_OVR_ON.
-	CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRD) = (CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRD) & 0xFFF7FFFF) | 0x80000;
-	//MC(MC_IRAM_REG_CTRL) &= 0xFFFFFFFE;
-	MC(MC_IRAM_BOM) = 0x40000000;
-	MC(MC_IRAM_TOM) = 0x4003F000;
+	CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRD) |= BIT(19);
+	//MC(MC_IRAM_REG_CTRL) &= ~BIT(0);
+	MC(MC_IRAM_BOM) = IRAM_BASE;
+	MC(MC_IRAM_TOM) = DRAM_START; // Default is only IRAM: 0x4003F000.
 }
 
 void mc_disable_ahb_redirect()
@@ -138,15 +137,27 @@ void mc_disable_ahb_redirect()
 	MC(MC_IRAM_BOM) = 0xFFFFF000;
 	MC(MC_IRAM_TOM) = 0;
 	// Disable IRAM_CFG_WRITE_ACCESS (sticky).
-	//MC(MC_IRAM_REG_CTRL) = MC(MC_IRAM_REG_CTRL) & 0xFFFFFFFE | 1;
+	//MC(MC_IRAM_REG_CTRL) |= BIT(0);
 	// Disable ARC_CLK_OVR_ON.
-	CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRD) &= 0xFFF7FFFF;
+	CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRD) &= ~BIT(19);
+}
+
+bool mc_client_has_access(void *address)
+{
+	// Check if address is in DRAM or if arbitration for IRAM is enabled.
+	if ((u32)address >= DRAM_START)
+		return true; // Access by default.
+	else if ((u32)address >= IRAM_BASE && MC(MC_IRAM_BOM) == IRAM_BASE)
+		return true; // Access by AHB arbitration.
+
+	// No access to address space.
+	return false;
 }
 
 void mc_enable()
 {
 	// Reset EMC source to PLLP.
-	CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_EMC) = (CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_EMC) & 0x1FFFFFFF) | 0x40000000;
+	CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_EMC) = (CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_EMC) & 0x1FFFFFFF) | (2 << 29);
 	// Enable memory clocks.
 	CLOCK(CLK_RST_CONTROLLER_CLK_ENB_H_SET) = BIT(CLK_H_EMC);
 	CLOCK(CLK_RST_CONTROLLER_CLK_ENB_H_SET) = BIT(CLK_H_MEM);
@@ -155,7 +166,7 @@ void mc_enable()
 	CLOCK(CLK_RST_CONTROLLER_RST_DEV_H_CLR) = BIT(CLK_H_EMC) | BIT(CLK_H_MEM);
 	usleep(5);
 
-#ifdef CONFIG_ENABLE_AHB_REDIRECT
+#ifdef BDK_MC_ENABLE_AHB_REDIRECT
 	mc_enable_ahb_redirect();
 #else
 	mc_disable_ahb_redirect();

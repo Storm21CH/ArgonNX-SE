@@ -24,6 +24,7 @@
 #include <soc/bpmp.h>
 #include <soc/clock.h>
 #include <soc/kfuse.h>
+#include <soc/pmc.h>
 #include <soc/t210.h>
 #include <mem/heap.h>
 #include <mem/mc.h>
@@ -33,7 +34,8 @@
 // #include <gfx_utils.h>
 
 #define PKG11_MAGIC 0x31314B50
-#define KB_TSEC_FW_EMU_COMPAT 6 // KB ID for HOS 6.2.0.
+
+#define TSEC_HOS_KB_620 6
 
 static int _tsec_dma_wait_idle()
 {
@@ -62,10 +64,11 @@ static int _tsec_dma_pa_to_internal_100(int not_imem, int i_offset, int pa_offse
 	return _tsec_dma_wait_idle();
 }
 
-int tsec_query(void *tsec_keys, u8 kb, tsec_ctxt_t *tsec_ctxt)
+int tsec_query(void *tsec_keys, tsec_ctxt_t *tsec_ctxt)
 {
 	int res = 0;
 	u8 *fwbuf = NULL;
+	u32 type = tsec_ctxt->type;
 	u32 *pdir, *car, *fuse, *pmc, *flowctrl, *se, *mc, *iram, *evec;
 	u32 *pkg11_magic_off;
 
@@ -82,6 +85,18 @@ int tsec_query(void *tsec_keys, u8 kb, tsec_ctxt_t *tsec_ctxt)
 	clock_enable_kfuse();
 
 	kfuse_wait_ready();
+
+	if (type == TSEC_FW_TYPE_NEW)
+	{
+		// Disable all CCPLEX core rails.
+		pmc_enable_partition(POWER_RAIL_CE0, DISABLE);
+		pmc_enable_partition(POWER_RAIL_CE1, DISABLE);
+		pmc_enable_partition(POWER_RAIL_CE2, DISABLE);
+		pmc_enable_partition(POWER_RAIL_CE3, DISABLE);
+
+		// Enable AHB aperture and set it to full mmio.
+		mc_enable_ahb_redirect();
+	}
 
 	// Configure Falcon.
 	TSEC(TSEC_DMACTL) = 0;
@@ -106,11 +121,11 @@ int tsec_query(void *tsec_keys, u8 kb, tsec_ctxt_t *tsec_ctxt)
 	}
 
 	// Load firmware or emulate memio environment for newer TSEC fw.
-	if (kb == KB_TSEC_FW_EMU_COMPAT)
+	if (type == TSEC_FW_TYPE_EMU)
 		TSEC(TSEC_DMATRFBASE) = (u32)tsec_ctxt->fw >> 8;
 	else
 	{
-		fwbuf = (u8 *)malloc(0x4000);
+		fwbuf = (u8 *)malloc(SZ_16K);
 		u8 *fwbuf_aligned = (u8 *)ALIGN((u32)fwbuf, 0x100);
 		memcpy(fwbuf_aligned, tsec_ctxt->fw, tsec_ctxt->size);
 		TSEC(TSEC_DMATRFBASE) = (u32)fwbuf_aligned >> 8;
@@ -125,7 +140,7 @@ int tsec_query(void *tsec_keys, u8 kb, tsec_ctxt_t *tsec_ctxt)
 		}
 	}
 
-	if (kb == KB_TSEC_FW_EMU_COMPAT)
+	if (type == TSEC_FW_TYPE_EMU)
 	{
 		// Init SMMU translation for TSEC.
 		pdir = smmu_init_for_tsec();
@@ -136,16 +151,16 @@ int tsec_query(void *tsec_keys, u8 kb, tsec_ctxt_t *tsec_ctxt)
 
 		// Clock reset controller.
 		car = page_alloc(1);
-		memcpy(car, (void *)CLOCK_BASE, 0x1000);
+		memcpy(car, (void *)CLOCK_BASE, SZ_PAGE);
 		car[CLK_RST_CONTROLLER_CLK_SOURCE_TSEC / 4] = 2;
 		smmu_map(pdir, CLOCK_BASE, (u32)car, 1, _WRITABLE | _READABLE | _NONSECURE);
 
 		// Fuse driver.
 		fuse = page_alloc(1);
-		memcpy((void *)&fuse[0x800/4], (void *)FUSE_BASE, 0x400);
+		memcpy((void *)&fuse[0x800/4], (void *)FUSE_BASE, SZ_1K);
 		fuse[0x82C / 4] = 0;
-		fuse[0x9E0 / 4] = (1 << (kb + 2)) - 1;
-		fuse[0x9E4 / 4] = (1 << (kb + 2)) - 1;
+		fuse[0x9E0 / 4] = (1 << (TSEC_HOS_KB_620 + 2)) - 1;
+		fuse[0x9E4 / 4] = (1 << (TSEC_HOS_KB_620 + 2)) - 1;
 		smmu_map(pdir, (FUSE_BASE - 0x800), (u32)fuse, 1, _READABLE | _NONSECURE);
 
 		// Power management controller.
@@ -158,12 +173,12 @@ int tsec_query(void *tsec_keys, u8 kb, tsec_ctxt_t *tsec_ctxt)
 
 		// Security engine.
 		se = page_alloc(1);
-		memcpy(se, (void *)SE_BASE, 0x1000);
+		memcpy(se, (void *)SE_BASE, SZ_PAGE);
 		smmu_map(pdir, SE_BASE, (u32)se, 1, _READABLE | _WRITABLE | _NONSECURE);
 
 		// Memory controller.
 		mc = page_alloc(1);
-		memcpy(mc, (void *)MC_BASE, 0x1000);
+		memcpy(mc, (void *)MC_BASE, SZ_PAGE);
 		mc[MC_IRAM_BOM / 4] = 0;
 		mc[MC_IRAM_TOM / 4] = 0x80000000;
 		smmu_map(pdir, MC_BASE, (u32)mc, 1, _READABLE | _NONSECURE);
@@ -187,7 +202,7 @@ int tsec_query(void *tsec_keys, u8 kb, tsec_ctxt_t *tsec_ctxt)
 	TSEC(TSEC_BOOTVEC) = 0;
 	TSEC(TSEC_CPUCTL) = TSEC_CPUCTL_STARTCPU;
 
-	if (kb == KB_TSEC_FW_EMU_COMPAT)
+	if (type == TSEC_FW_TYPE_EMU)
 	{
 		u32 start = get_tmr_us();
 		u32 k = se[SE_CRYPTO_KEYTABLE_DATA_REG / 4];
@@ -272,11 +287,10 @@ int tsec_query(void *tsec_keys, u8 kb, tsec_ctxt_t *tsec_ctxt)
 		memcpy(tsec_keys, &buf, SE_KEY_128_SIZE);
 	}
 
-out_free:;
+out_free:
 	free(fwbuf);
 
-out:;
-
+out:
 	// Disable clocks.
 	clock_disable_kfuse();
 	clock_disable_sor1();

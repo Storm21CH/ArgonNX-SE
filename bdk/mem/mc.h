@@ -25,6 +25,7 @@ void mc_config_carveout();
 void mc_config_carveout_finalize();
 void mc_enable_ahb_redirect();
 void mc_disable_ahb_redirect();
+bool mc_client_has_access(void *address);
 void mc_enable();
 
 #endif
