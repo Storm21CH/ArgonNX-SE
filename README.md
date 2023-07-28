@@ -128,7 +128,6 @@ Danke an @dezem und https://gbatemp.net/members/twocool4life86.591345/ für die 
 - Textcolor
 - Tab Textcolor
 - Standard Payload Icon color
-
 - New icons for Emunandswitcher and ArgonNX-SE itself
 - Updated to 1.5
 - General bug fixes and stability fixes
@@ -139,7 +138,6 @@ Danke an @dezem und https://gbatemp.net/members/twocool4life86.591345/ für die 
 - Textfarbe
 - Tab Textfarbe
 - Standart Payload Icon Farbe
-
 - Neue Icons für Emunandswitcher und ArgonNX-SE selber
 - Update zu 1.5
 - Allgemeine Fehlerbehebung und Stabilitäts Fixes
@@ -183,6 +181,26 @@ Danke an @dezem und https://gbatemp.net/members/twocool4life86.591345/ für die 
 - Das Bild muss eine Auflösung von 1280x720px und format ARGB32 besitzen, wie background.bmp
 - Das Bild muss den gleichen Namen wie der Payload haben und sich im Ordner "argon/payloads" befinden, z.B. bei fusee.bin = fusee.bmp
 
+
+## NEW Features in ArgonNX-SE v1.9 by Storm
+
+- This update is only required for Mariko and Aula consoles, has no advantage on Erista consoles, which use Reboot to Payload functions as usual.
+- Mariko and AULA "Reboot to Payload" function chain
+- Per HBL nro, menu nsp, system modules to nro (010000000000100B Nintendo Store Button), and ArgonNX-SE RTP Payload Tesla Overlay with possibility to choose a payload and reboot
+- The whole thing works via ArgonNX-SE and this must then also be used as the root payload.bin. Please note SD folders and files.
+
+## Neue Funktionen in ArgonNX-SE v1.9 by Storm
+
+- Dieses Update wird nur für Mariko und Aula Konsolen benötigt, bringt keinen Vorteil auf Erista Konsolen, dort wie immer Reboot to Payload Funktionen benutzen.
+- Mariko und AULA "Reboot to Payload" Funktions Kette
+- Per HBL nro, Menü nsp, Systemmodule to nro (010000000000100B Nintendo Store Button), und ArgonNX-SE RTP Payload Tesla Overlay mit Möglichkeit einen Payload zu wählen und zu rebooten
+- Das ganze funktioniert über ArgonNX-SE und dieser muss dann auch als Root payload.bin benutzt werden. Bitte SD Ordner und Dateien beachten.
+
+![](Screenshots/2023072102031500-57B4628D2267231D57E0FC1078C0596D.jpg)
+![](Screenshots/2023072102040000-57B4628D2267231D57E0FC1078C0596D.jpg)
+![](Screenshots/2023072302201400-0004EDF51B27297FAD35745CCDCC73BD.jpg)
+![](Screenshots/2023072302154100-57B4628D2267231D57E0FC1078C0596D.jpg)
+![](Screenshots/2023072302101600-57B4628D2267231D57E0FC1078C0596D.jpg)
 
 ## About BMP format
 
