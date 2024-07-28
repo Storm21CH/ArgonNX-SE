@@ -202,6 +202,27 @@ Danke an @dezem und https://gbatemp.net/members/twocool4life86.591345/ für die 
 ![](Screenshots/2023072302154100-57B4628D2267231D57E0FC1078C0596D.jpg)
 ![](Screenshots/2023072302101600-57B4628D2267231D57E0FC1078C0596D.jpg)
 
+
+
+## NEW Features in ArgonNX-SE v2.0 by Storm:
+
+- bdk update to 6.10
+- Language selection and function changed to have more languages.
+- Added Unicode and special characters for more languages.
+- Added Spanish by Impeeza
+- Chinese by Faker Dev
+
+## Neue Funktionen in ArgonNX-SE v2.0 by Storm
+
+- bdk update auf 6.10
+- Sprachauswahl und Funktion geändert um mehr Sprachen zu haben.
+- Unicode hinzugefügt und Sonderzeichen eingefügt für mehr Sprachen.
+- Spanisch hinzugefügt by Impeeza
+- Chinesisch by Faker Dev
+
+
+
+
 ## About BMP format
 
 The only format supported is **BMP 32 bit ARGB color**.
